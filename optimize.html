@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drawing Optimizer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      margin: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    
+    h1 {
+      color: #2c3e50;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: white;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    
+    button:hover {
+      background-color: #2980b9;
+    }
+    
+    button:disabled {
+      background-color: #95a5a6;
+      cursor: not-allowed;
+    }
+    
+    #results {
+      margin-top: 20px;
+      border-top: 1px solid #ddd;
+      padding-top: 20px;
+      white-space: pre-wrap;
+      font-family: monospace;
+      max-height: 500px;
+      overflow-y: auto;
+      background-color: #f8f8f8;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    
+    .success {
+      color: #27ae60;
+    }
+    
+    .error {
+      color: #c0392b;
+    }
+    
+    .warning {
+      color: #f39c12;
+    }
+    
+    .info {
+      color: #2980b9;
+    }
+    
+    .progress-bar {
+      width: 100%;
+      background-color: #ddd;
+      height: 20px;
+      border-radius: 5px;
+      margin-top: 20px;
+      position: relative;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      border-radius: 5px;
+      background-color: #3498db;
+      transition: width 0.3s;
+      width: 0%;
+    }
+    
+    .progress-text {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      line-height: 20px;
+      color: white;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Drawing Optimizer</h1>
+    <p>This tool optimizes the drawings stored on the server to reduce their size while preserving transparency.</p>
+    
+    <div>
+      <button id="optimizeBtn">Start Optimization</button>
+      <button id="checkBtn">Check Server Status</button>
+    </div>
+    
+    <div class="progress-bar" id="progressBar">
+      <div class="progress-fill" id="progressFill"></div>
+      <div class="progress-text" id="progressText">0%</div>
+    </div>
+    
+    <div id="results"></div>
+  </div>
+  
+  <script src="browser-optimizer.js"></script>
+  <script>
+    // Initialize UI references
+    const optimizeBtn = document.getElementById('optimizeBtn');
+    const checkBtn = document.getElementById('checkBtn');
+    const resultsDiv = document.getElementById('results');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    
+    // Function to log messages to the results div
+    function log(message, type = 'info') {
+      console.log(message);
+      const line = document.createElement('div');
+      line.textContent = message;
+      line.className = type;
+      resultsDiv.appendChild(line);
+      resultsDiv.scrollTop = resultsDiv.scrollHeight;
+    }
+    
+    // Function to update progress bar
+    function updateProgress(percent) {
+      progressFill.style.width = `${percent}%`;
+      progressText.textContent = `${Math.round(percent)}%`;
+    }
+    
+    // Check server status
+    checkBtn.addEventListener('click', async () => {
+      checkBtn.disabled = true;
+      log('Checking server status...', 'info');
+      
+      try {
+        const response = await fetch('http://localhost:3000/api/status');
+        if (response.ok) {
+          const status = await response.json();
+          log(`Server is running. ${status.drawingsCount} drawings available.`, 'success');
+        } else {
+          log(`Server error: ${response.statusText}`, 'error');
+        }
+      } catch (error) {
+        log(`Failed to connect to server: ${error.message}`, 'error');
+        log('Make sure the server is running with "npm start"', 'warning');
+      }
+      
+      checkBtn.disabled = false;
+    });
+    
+    // Run optimization
+    optimizeBtn.addEventListener('click', async () => {
+      optimizeBtn.disabled = true;
+      checkBtn.disabled = true;
+      resultsDiv.innerHTML = '';
+      updateProgress(0);
+      
+      log('Fetching drawings from server...', 'info');
+      
+      try {
+        // Get all drawings
+        const drawings = await fetchDrawings();
+        
+        if (!drawings.length) {
+          log('No drawings found.', 'warning');
+          optimizeBtn.disabled = false;
+          checkBtn.disabled = false;
+          return;
+        }
+        
+        log(`Found ${drawings.length} drawings. Starting optimization...`, 'info');
+        
+        // Stats
+        let optimizedCount = 0;
+        let failedCount = 0;
+        let skippedCount = 0;
+        let totalSavings = 0;
+        
+        // Process each drawing
+        for (let i = 0; i < drawings.length; i++) {
+          const drawing = drawings[i];
+          const progress = Math.round((i / drawings.length) * 100);
+          updateProgress(progress);
+          
+          log(`Processing drawing ${i+1}/${drawings.length}: ${drawing.wallKey}`, 'info');
+          
+          try {
+            // Skip compressed preview drawings
+            if (drawing.isCompressed) {
+              log(`Skipping compressed preview drawing: ${drawing.wallKey}`, 'warning');
+              skippedCount++;
+              continue;
+            }
+            
+            // Skip already optimized drawings
+            if (drawing.optimized) {
+              log(`Skipping already optimized drawing: ${drawing.wallKey}`, 'warning');
+              skippedCount++;
+              continue;
+            }
+            
+            // Optimize the drawing
+            const optimized = await optimizeDrawing(drawing);
+            
+            // If nothing changed or very small savings, skip saving
+            if (!optimized.optimized || optimized.reductionPercent < 5) {
+              log(`Drawing ${drawing.wallKey} already optimal (${drawing.dataURL.length} bytes)`, 'warning');
+              skippedCount++;
+              continue;
+            }
+            
+            // Save the optimized drawing
+            log(`Optimized: ${optimized.originalSize} → ${optimized.optimizedSize} bytes (${optimized.reductionPercent}% reduction)`, 'success');
+            
+            const saved = await saveOptimizedDrawing(optimized);
+            if (saved) {
+              optimizedCount++;
+              totalSavings += (optimized.originalSize - optimized.optimizedSize);
+            } else {
+              failedCount++;
+            }
+            
+          } catch (error) {
+            log(`Error processing drawing ${drawing.wallKey}: ${error.message}`, 'error');
+            failedCount++;
+          }
+        }
+        
+        updateProgress(100);
+        
+        // Show summary
+        log('\nOptimization complete:', 'info');
+        log(`- Optimized: ${optimizedCount} drawings`, 'success');
+        log(`- Skipped: ${skippedCount} drawings`, 'warning');
+        log(`- Failed: ${failedCount} drawings`, 'error');
+        log(`- Total space saved: ${Math.round(totalSavings / 1024)} KB`, 'success');
+        
+      } catch (error) {
+        log(`Error during optimization: ${error.message}`, 'error');
+      }
+      
+      optimizeBtn.disabled = false;
+      checkBtn.disabled = false;
+    });
+    
+    // Initial check when the page loads
+    document.addEventListener('DOMContentLoaded', () => {
+      log('Drawing optimizer ready. Click "Check Server Status" to verify the server is running.', 'info');
+    });
+  </script>
+</body>
+</html>

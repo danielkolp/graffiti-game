@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drawing Fetch Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      margin: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: white;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    
+    button:hover {
+      background-color: #2980b9;
+    }
+    
+    pre {
+      background-color: #f8f8f8;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+    
+    #imagePreview {
+      margin-top: 20px;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      max-width: 100%;
+      overflow: auto;
+    }
+    
+    #imagePreview img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #eee;
+      display: block;
+      margin-top: 10px;
+    }
+    
+    .error {
+      color: red;
+      font-weight: bold;
+    }
+    
+    .success {
+      color: green;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Drawing Fetch Test</h1>
+    
+    <div>
+      <h2>Test API Endpoints</h2>
+      <button onclick="testServerStatus()">Test Server Status</button>
+      <button onclick="fetchAllDrawings()">Fetch All Drawings</button>
+      <input type="text" id="wallKeyInput" placeholder="Enter wall key (e.g. wall_123_45)">
+      <button onclick="fetchSpecificDrawing()">Fetch Specific Drawing</button>
+    </div>
+    
+    <h3>Results:</h3>
+    <pre id="output">Results will appear here...</pre>
+    
+    <div id="imagePreview">
+      <h3>Image Preview:</h3>
+      <div id="imageContainer"></div>
+    </div>
+  </div>
+  
+  <script>
+    // Test server status
+    async function testServerStatus() {
+      logOutput("Testing server status...");
+      try {
+        const response = await fetch('http://localhost:3000/api/status');
+        if (response.ok) {
+          const data = await response.json();
+          logOutput("Server status:", data, 'success');
+        } else {
+          logOutput(`Error: ${response.status} ${response.statusText}`, null, 'error');
+        }
+      } catch (error) {
+        logOutput(`Connection error: ${error.message}`, null, 'error');
+      }
+    }
+    
+    // Fetch all drawings
+    async function fetchAllDrawings() {
+      logOutput("Fetching all drawings...");
+      try {
+        const response = await fetch('http://localhost:3000/api/drawings');
+        if (response.ok) {
+          const drawings = await response.json();
+          logOutput(`Found ${drawings.length} drawings:`, drawings, 'success');
+        } else {
+          logOutput(`Error: ${response.status} ${response.statusText}`, null, 'error');
+        }
+      } catch (error) {
+        logOutput(`Connection error: ${error.message}`, null, 'error');
+      }
+    }
+    
+    // Fetch a specific drawing
+    async function fetchSpecificDrawing() {
+      const wallKey = document.getElementById('wallKeyInput').value.trim();
+      if (!wallKey) {
+        logOutput("Please enter a wall key", null, 'error');
+        return;
+      }
+      
+      logOutput(`Fetching drawing with key: ${wallKey}`);
+      
+      try {
+        // First try with debug endpoint
+        const debugResponse = await fetch(`http://localhost:3000/api/drawings/${wallKey}/debug`);
+        
+        if (debugResponse.ok) {
+          const debugInfo = await debugResponse.json();
+          logOutput("Debug info:", debugInfo);
+        }
+        
+        // Then get the full drawing
+        const response = await fetch(`http://localhost:3000/api/drawings/${wallKey}/full`);
+        
+        if (response.ok) {
+          const drawing = await response.json();
+          
+          // Create a sanitized version without the full dataURL for display
+          const displayDrawing = { ...drawing };
+          if (displayDrawing.dataURL) {
+            displayDrawing.dataURL = displayDrawing.dataURL.substring(0, 100) + '...';
+          }
+          
+          logOutput("Drawing:", displayDrawing, 'success');
+          
+          // Display the image
+          if (drawing.dataURL) {
+            displayImage(drawing.dataURL);
+          } else {
+            logOutput("No image data in the drawing", null, 'error');
+            clearImageDisplay();
+          }
+        } else {
+          logOutput(`Error: ${response.status} ${response.statusText}`, null, 'error');
+          clearImageDisplay();
+        }
+      } catch (error) {
+        logOutput(`Connection error: ${error.message}`, null, 'error');
+        clearImageDisplay();
+      }
+    }
+    
+    // Display an image from dataURL
+    function displayImage(dataURL) {
+      const container = document.getElementById('imageContainer');
+      container.innerHTML = '';
+      
+      // Create details about the dataURL
+      const details = document.createElement('div');
+      details.textContent = `DataURL length: ${dataURL.length} bytes`;
+      details.style.marginBottom = '10px';
+      container.appendChild(details);
+      
+      // Create format info
+      const format = document.createElement('div');
+      format.textContent = `Format: ${dataURL.substring(0, 30)}...`;
+      format.style.marginBottom = '10px';
+      container.appendChild(format);
+      
+      // Create image
+      const img = document.createElement('img');
+      img.onload = () => {
+        const sizeInfo = document.createElement('div');
+        sizeInfo.textContent = `Image dimensions: ${img.width}x${img.height}`;
+        sizeInfo.style.marginBottom = '10px';
+        container.insertBefore(sizeInfo, img);
+      };
+      
+      img.onerror = () => {
+        const errorInfo = document.createElement('div');
+        errorInfo.textContent = 'Error loading image from dataURL';
+        errorInfo.style.color = 'red';
+        container.appendChild(errorInfo);
+      };
+      
+      img.src = dataURL;
+      container.appendChild(img);
+    }
+    
+    // Clear image display
+    function clearImageDisplay() {
+      document.getElementById('imageContainer').innerHTML = 'No image to display';
+    }
+    
+    // Log output to the pre element
+    function logOutput(message, data = null, type = 'info') {
+      const output = document.getElementById('output');
+      
+      let text = message;
+      if (data) {
+        text += '\n' + JSON.stringify(data, null, 2);
+      }
+      
+      output.textContent = text;
+      
+      if (type === 'error') {
+        output.className = 'error';
+      } else if (type === 'success') {
+        output.className = 'success';
+      } else {
+        output.className = '';
+      }
+    }
+  </script>
+</body>
+</html>

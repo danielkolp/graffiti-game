@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Character with Shared Wall Drawing</title>
+    <link rel="stylesheet" href="style.css">
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+            "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+        }
+    }
+    </script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            color: white;
+            flex-direction: column;
+        }
+        
+        .instructions {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 400px;
+            font-size: 14px;
+            z-index: 1000;
+        }
+        
+        .instructions h2 {
+            margin-top: 0;
+        }
+        
+        .instructions ul {
+            padding-left: 20px;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            z-index: 1000;
+        }
+        
+        .connection-status.connected {
+            background-color: rgba(0, 128, 0, 0.7);
+        }
+        
+        .connection-status.disconnected {
+            background-color: rgba(255, 0, 0, 0.7);
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-overlay">
+        <h2>Loading...</h2>
+        <div id="loading-text">Initializing...</div>
+    </div>
+    
+    <div class="instructions">
+        <h2>Controls</h2>
+        <ul>
+            <li><strong>W, A, S, D:</strong> Move character</li>
+            <li><strong>Shift:</strong> Run</li>
+            <li><strong>Space:</strong> Jump</li>
+            <li><strong>Mouse:</strong> Look around</li>
+            <li><strong>E:</strong> Draw on walls (when prompt appears)</li>            <li><strong>T:</strong> Toggle mouse positioning for drawing</li>
+            <li><strong>Escape:</strong> Cancel drawing</li>
+        </ul>
+        <p>Find a wall, look at it closely, and press E to draw! Move your mouse to position your drawing.</p>
+        <p>Your drawings will be visible to other players.</p>
+    </div>
+    
+    <div id="connection-status" class="connection-status disconnected">
+        Offline Mode
+    </div>
+    
+    <script type="module" src="script.js"></script>
+    <script>
+        // Update connection status display
+        window.updateConnectionStatus = function(connected) {
+            const statusEl = document.getElementById('connection-status');
+            if (connected) {
+                statusEl.textContent = 'Connected - Drawings Shared';
+                statusEl.className = 'connection-status connected';
+            } else {
+                statusEl.textContent = 'Offline Mode';
+                statusEl.className = 'connection-status disconnected';
+            }
+        };
+    </script>
+</body>
+</html>

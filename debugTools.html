@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Wall Drawing Debug Tools</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      margin: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    
+    h1 {
+      color: #2c3e50;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: white;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    
+    button:hover {
+      background-color: #2980b9;
+    }
+    
+    button:disabled {
+      background-color: #95a5a6;
+      cursor: not-allowed;
+    }
+    
+    pre {
+      background-color: #f8f8f8;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+    
+    .drawing-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    
+    .preview-item {
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 10px;
+      width: 200px;
+    }
+    
+    .preview-item img {
+      max-width: 100%;
+      height: auto;
+    }
+    
+    .actions {
+      margin: 20px 0;
+    }
+    
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+    }
+    
+    .status.success {
+      background-color: rgba(46, 204, 113, 0.2);
+      border: 1px solid #2ecc71;
+    }
+    
+    .status.error {
+      background-color: rgba(231, 76, 60, 0.2);
+      border: 1px solid #e74c3c;
+    }
+    
+    .status.warning {
+      background-color: rgba(241, 196, 15, 0.2);
+      border: 1px solid #f1c40f;
+    }
+    
+    .tab-buttons {
+      margin-bottom: 20px;
+    }
+    
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    table th, table td {
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    
+    table th {
+      background-color: #f2f2f2;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>3D Wall Drawing Debug Tools</h1>
+    
+    <div class="tab-buttons">
+      <button onclick="showTab('server-tab')">Server Status</button>
+      <button onclick="showTab('drawings-tab')">Drawings</button>
+      <button onclick="showTab('test-tab')">Test Tools</button>
+      <button onclick="showTab('repair-tab')">Repair Tools</button>
+    </div>
+    
+    <div id="status-message" class="status"></div>
+    
+    <div id="server-tab" class="tab-content active">
+      <h2>Server Status</h2>
+      <div class="actions">
+        <button onclick="checkServerStatus()">Check Server Status</button>
+        <button onclick="getDrawingCount()">Get Drawing Count</button>
+      </div>
+      <div class="card">
+        <h3>Status Information</h3>
+        <pre id="server-info">Click "Check Server Status" to see information</pre>
+      </div>
+    </div>
+    
+    <div id="drawings-tab" class="tab-content">
+      <h2>Drawings</h2>
+      <div class="actions">
+        <button onclick="listDrawings()">List All Drawings</button>
+        <button onclick="previewDrawings()">Preview Drawings</button>
+      </div>
+      <div class="card">
+        <h3>Drawing List</h3>
+        <div id="drawing-list">Click "List All Drawings" to see the list</div>
+      </div>
+      <div class="card">
+        <h3>Drawing Previews</h3>
+        <div id="drawing-previews" class="drawing-preview"></div>
+      </div>
+    </div>
+    
+    <div id="test-tab" class="tab-content">
+      <h2>Test Tools</h2>
+      <div class="actions">
+        <button onclick="testImageLoading()">Test Image Loading</button>
+        <button onclick="validateDrawings()">Validate All Drawings</button>
+      </div>
+      <div class="card">
+        <h3>Test Results</h3>
+        <pre id="test-results">Run a test to see results</pre>
+      </div>
+    </div>
+    
+    <div id="repair-tab" class="tab-content">
+      <h2>Repair Tools</h2>
+      <div class="actions">
+        <button onclick="repairTransparency()">Repair Transparency</button>
+        <button onclick="optimizeDrawingSizes()">Optimize Drawing Sizes</button>
+        <button onclick="confirmReset()">Reset All Drawings</button>
+      </div>
+      <div class="card">
+        <h3>Repair Results</h3>
+        <pre id="repair-results">Run a repair action to see results</pre>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    // Show a specific tab
+    function showTab(tabId) {
+      // Hide all tabs
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      
+      // Show selected tab
+      document.getElementById(tabId).classList.add('active');
+    }
+    
+    // Show status message
+    function showStatus(message, type = 'info') {
+      const statusEl = document.getElementById('status-message');
+      statusEl.textContent = message;
+      statusEl.className = `status ${type}`;
+    }
+    
+    // Check server status
+    async function checkServerStatus() {
+      showStatus('Checking server status...', 'warning');
+      try {
+        const response = await fetch('http://localhost:3000/api/status');
+        if (response.ok) {
+          const data = await response.json();
+          document.getElementById('server-info').textContent = JSON.stringify(data, null, 2);
+          showStatus('Server is running', 'success');
+        } else {
+          document.getElementById('server-info').textContent = `Error: ${response.status} ${response.statusText}`;
+          showStatus('Server error', 'error');
+        }
+      } catch (error) {
+        document.getElementById('server-info').textContent = `Connection Error: ${error.message}\nMake sure the server is running with "npm start"`;
+        showStatus('Connection error', 'error');
+      }
+    }
+    
+    // Get drawing count
+    async function getDrawingCount() {
+      showStatus('Fetching drawing count...', 'warning');
+      try {
+        const response = await fetch('http://localhost:3000/api/debug/walls');
+        if (response.ok) {
+          const data = await response.json();
+          document.getElementById('server-info').textContent = JSON.stringify(data, null, 2);
+          showStatus(`Found ${data.count} drawings`, 'success');
+        } else {
+          document.getElementById('server-info').textContent = `Error: ${response.status} ${response.statusText}`;
+          showStatus('Server error', 'error');
+        }
+      } catch (error) {
+        document.getElementById('server-info').textContent = `Connection Error: ${error.message}`;
+        showStatus('Connection error', 'error');
+      }
+    }
+    
+    // List all drawings
+    async function listDrawings() {
+      showStatus('Loading drawing list...', 'warning');
+      try {
+        const response = await fetch('http://localhost:3000/api/drawings');
+        if (response.ok) {
+          const drawings = await response.json();
+          
+          // Create a table
+          let html = `<table>
+            <tr>
+              <th>Wall Key</th>
+              <th>Data Size</th>
+              <th>Position</th>
+              <th>Actions</th>
+            </tr>`;
+          
+          drawings.forEach(drawing => {
+            const dataSize = drawing.dataURL ? Math.round(drawing.dataURL.length / 1024) + ' KB' : 'N/A';
+            
+            html += `<tr>
+              <td>${drawing.wallKey}</td>
+              <td>${dataSize}</td>
+              <td>x: ${drawing.position?.x?.toFixed(2) || 'N/A'}, 
+                  y: ${drawing.position?.y?.toFixed(2) || 'N/A'}, 
+                  z: ${drawing.position?.z?.toFixed(2) || 'N/A'}</td>
+              <td>
+                <button onclick="viewDrawing('${drawing.wallKey}')">View</button>
+                <button onclick="debugDrawing('${drawing.wallKey}')">Debug</button>
+              </td>
+            </tr>`;
+          });
+          
+          html += '</table>';
+          
+          document.getElementById('drawing-list').innerHTML = html;
+          showStatus(`Loaded ${drawings.length} drawings`, 'success');
+        } else {
+          document.getElementById('drawing-list').textContent = `Error: ${response.status} ${response.statusText}`;
+          showStatus('Server error', 'error');
+        }
+      } catch (error) {
+        document.getElementById('drawing-list').textContent = `Connection Error: ${error.message}`;
+        showStatus('Connection error', 'error');
+      }
+    }
+    
+    // View a specific drawing
+    async function viewDrawing(wallKey) {
+      showStatus(`Loading drawing ${wallKey}...`, 'warning');
+      try {
+        const response = await fetch(`http://localhost:3000/api/drawings/${wallKey}/full`);
+        if (response.ok) {
+          const drawing = await response.json();
+          
+          // Create modal
+          const modal = document.createElement('div');
+          modal.style.position = 'fixed';
+          modal.style.top = '0';
+          modal.style.left = '0';
+          modal.style.width = '100%';
+          modal.style.height = '100%';
+          modal.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+          modal.style.display = 'flex';
+          modal.style.justifyContent = 'center';
+          modal.style.alignItems = 'center';
+          modal.style.zIndex = '1000';
+          
+          // Modal content
+          const content = document.createElement('div');
+          content.style.backgroundColor = 'white';
+          content.style.padding = '20px';
+          content.style.borderRadius = '5px';
+          content.style.maxWidth = '80%';
+          content.style.maxHeight = '80%';
+          content.style.overflow = 'auto';
+          
+          // Close button
+          const closeButton = document.createElement('button');
+          closeButton.textContent = 'Close';
+          closeButton.onclick = () => document.body.removeChild(modal);
+          
+          // Image
+          const image = document.createElement('img');
+          image.src = drawing.dataURL;
+          image.style.maxWidth = '100%';
+          image.style.maxHeight = '400px';
+          image.style.display = 'block';
+          image.style.marginBottom = '20px';
+          
+          // Drawing details
+          const details = document.createElement('pre');
+          // Filter out the dataURL to keep the display cleaner
+          const displayDrawing = { ...drawing };
+          if (displayDrawing.dataURL) {
+            displayDrawing.dataURL = displayDrawing.dataURL.substring(0, 100) + '...';
+          }
+          details.textContent = JSON.stringify(displayDrawing, null, 2);
+          
+          // Add everything to the DOM
+          content.appendChild(closeButton);
+          content.appendChild(image);
+          content.appendChild(details);
+          modal.appendChild(content);
+          document.body.appendChild(modal);
+          
+          showStatus(`Viewing drawing ${wallKey}`, 'success');
+        } else {
+          showStatus(`Error loading drawing: ${response.status} ${response.statusText}`, 'error');
+        }
+      } catch (error) {
+        showStatus(`Connection Error: ${error.message}`, 'error');
+      }
+    }
+    
+    // Debug a drawing
+    async function debugDrawing(wallKey) {
+      showStatus(`Debugging drawing ${wallKey}...`, 'warning');
+      try {
+        const response = await fetch(`http://localhost:3000/api/drawings/${wallKey}/debug`);
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Show the debug data
+          const modal = document.createElement('div');
+          modal.style.position = 'fixed';
+          modal.style.top = '0';
+          modal.style.left = '0';
+          modal.style.width = '100%';
+          modal.style.height = '100%';
+          modal.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+          modal.style.display = 'flex';
+          modal.style.justifyContent = 'center';
+          modal.style.alignItems = 'center';
+          modal.style.zIndex = '1000';
+          
+          // Modal content
+          const content = document.createElement('div');
+          content.style.backgroundColor = 'white';
+          content.style.padding = '20px';
+          content.style.borderRadius = '5px';
+          content.style.maxWidth = '80%';
+          content.style.maxHeight = '80%';
+          content.style.overflow = 'auto';
+          
+          // Close button
+          const closeButton = document.createElement('button');
+          closeButton.textContent = 'Close';
+          closeButton.onclick = () => document.body.removeChild(modal);
+          
+          // Debug info
+          const title = document.createElement('h2');
+          title.textContent = `Debug Info for Drawing ${wallKey}`;
+          
+          const details = document.createElement('pre');
+          details.textContent = JSON.stringify(data, null, 2);
+          
+          // Add everything to the DOM
+          content.appendChild(closeButton);
+          content.appendChild(title);
+          content.appendChild(details);
+          modal.appendChild(content);
+          document.body.appendChild(modal);
+          
+          showStatus(`Debugging drawing ${wallKey}`, 'success');
+        } else {
+          showStatus(`Error debugging drawing: ${response.status} ${response.statusText}`, 'error');
+        }
+      } catch (error) {
+        showStatus(`Connection Error: ${error.message}`, 'error');
+      }
+    }
+    
+    // Preview drawings
+    async function previewDrawings() {
+      showStatus('Loading drawing previews...', 'warning');
+      try {
+        const response = await fetch('http://localhost:3000/api/drawings');
+        if (response.ok) {
+          const drawings = await response.json();
+          const previewsContainer = document.getElementById('drawing-previews');
+          previewsContainer.innerHTML = '';
+          
+          // Limit to 20 previews to avoid overloading the browser
+          const previewCount = Math.min(drawings.length, 20);
+          
+          for (let i = 0; i < previewCount; i++) {
+            const drawing = drawings[i];
+            
+            const previewItem = document.createElement('div');
+            previewItem.className = 'preview-item';
+            
+            const title = document.createElement('div');
+            title.textContent = drawing.wallKey;
+            title.style.fontWeight = 'bold';
+            title.style.marginBottom = '5px';
+            
+            const imageContainer = document.createElement('div');
+            
+            // If we have a compressed preview, we need to fetch the full image
+            if (drawing.isCompressed) {
+              imageContainer.textContent = 'Loading full image...';
+              
+              // Fetch the full image
+              fetch(`http://localhost:3000/api/drawings/${drawing.wallKey}/full`)
+                .then(response => {
+                  if (response.ok) return response.json();
+                  throw new Error('Failed to get full drawing');
+                })
+                .then(fullDrawing => {
+                  if (fullDrawing && fullDrawing.dataURL) {
+                    // Create image
+                    const img = document.createElement('img');
+                    img.src = fullDrawing.dataURL;
+                    
+                    // Clear the container and add the image
+                    imageContainer.textContent = '';
+                    imageContainer.appendChild(img);
+                  }
+                })
+                .catch(error => {
+                  imageContainer.textContent = `Error: ${error.message}`;
+                });
+            }
+            // Otherwise, use the provided dataURL
+            else if (drawing.dataURL) {
+              const img = document.createElement('img');
+              img.src = drawing.dataURL;
+              imageContainer.appendChild(img);
+            }
+            // No image data available
+            else {
+              imageContainer.textContent = 'No image data available';
+            }
+            
+            // Add everything to the preview item
+            previewItem.appendChild(title);
+            previewItem.appendChild(imageContainer);
+            
+            // Add the preview item to the container
+            previewsContainer.appendChild(previewItem);
+          }
+          
+          if (drawings.length > previewCount) {
+            const message = document.createElement('div');
+            message.textContent = `Showing ${previewCount} of ${drawings.length} drawings`;
+            previewsContainer.appendChild(message);
+          }
+          
+          showStatus(`Loaded ${drawings.length} drawing previews`, 'success');
+        } else {
+          document.getElementById('drawing-previews').textContent = `Error: ${response.status} ${response.statusText}`;
+          showStatus('Server error', 'error');
+        }
+      } catch (error) {
+        document.getElementById('drawing-previews').textContent = `Connection Error: ${error.message}`;
+        showStatus('Connection error', 'error');
+      }
+    }
+    
+    // Test image loading
+    function testImageLoading() {
+      showStatus('Testing image loading...', 'warning');
+      
+      const testResults = document.getElementById('test-results');
+      testResults.textContent = 'Testing image loading...';
+      
+      // Create transparent test image
+      const canvas = document.createElement('canvas');
+      canvas.width = 200;
+      canvas.height = 200;
+      const ctx = canvas.getContext('2d');
+      
+      // Clear with transparent background
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw a semi-transparent red circle
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+      ctx.beginPath();
+      ctx.arc(canvas.width/2, canvas.height/2, 50, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw text
+      ctx.fillStyle = 'black';
+      ctx.font = 'bold 20px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Test Image', canvas.width/2, canvas.height/2);
+      
+      // Get the data URL
+      const dataURL = canvas.toDataURL('image/png');
+      
+      // Create an image and try to load the data URL
+      const img = new Image();
+      img.onload = function() {
+        testResults.textContent += '\nImage loaded successfully!';
+        testResults.textContent += `\nImage size: ${img.width}x${img.height}`;
+        testResults.textContent += `\nData URL length: ${dataURL.length} characters`;
+        
+        // Test displaying the image
+        testResults.textContent += '\nTesting displaying the image...';
+        const testImg = document.createElement('img');
+        testImg.src = dataURL;
+        testImg.style.display = 'block';
+        testImg.style.margin = '10px 0';
+        testImg.style.border = '1px solid #ccc';
+        testResults.appendChild(testImg);
+        
+        showStatus('Image loading test completed successfully', 'success');
+      };
+      
+      img.onerror = function(err) {
+        testResults.textContent += `\nError loading image: ${err.message}`;
+        showStatus('Image loading test failed', 'error');
+      };
+      
+      img.src = dataURL;
+      
+      testResults.textContent += `\nGenerated test image with data URL length: ${dataURL.length}`;
+    }
+    
+    // Validate all drawings
+    async function validateDrawings() {
+      showStatus('Validating drawings...', 'warning');
+      
+      const testResults = document.getElementById('test-results');
+      testResults.textContent = 'Fetching drawings to validate...';
+      
+      try {
+        const response = await fetch('http://localhost:3000/api/drawings');
+        if (response.ok) {
+          const drawings = await response.json();
+          
+          testResults.textContent = `Found ${drawings.length} drawings. Validating...`;
+          
+          let valid = 0;
+          let invalid = 0;
+          const invalidDrawings = [];
+          
+          // Validate each drawing
+          drawings.forEach(drawing => {
+            let isValid = true;
+            const issues = [];
+            
+            // Check wallKey
+            if (!drawing.wallKey) {
+              isValid = false;
+              issues.push('Missing wallKey');
+            }
+            
+            // Check position
+            if (!drawing.position || 
+                typeof drawing.position.x !== 'number' || 
+                typeof drawing.position.y !== 'number' || 
+                typeof drawing.position.z !== 'number') {
+              isValid = false;
+              issues.push('Invalid position');
+            }
+            
+            // Check normal
+            if (!drawing.normal || 
+                typeof drawing.normal.x !== 'number' || 
+                typeof drawing.normal.y !== 'number' || 
+                typeof drawing.normal.z !== 'number') {
+              isValid = false;
+              issues.push('Invalid normal');
+            }
+            
+            // Check dataURL (if not compressed)
+            if (!drawing.isCompressed && (!drawing.dataURL || !drawing.dataURL.startsWith('data:image/'))) {
+              isValid = false;
+              issues.push('Invalid dataURL');
+            }
+            
+            // Update counters
+            if (isValid) {
+              valid++;
+            } else {
+              invalid++;
+              invalidDrawings.push({
+                wallKey: drawing.wallKey || 'unknown',
+                issues
+              });
+            }
+          });
+          
+          // Display results
+          testResults.textContent = `Validation complete:
+- Total drawings: ${drawings.length}
+- Valid drawings: ${valid}
+- Invalid drawings: ${invalid}`;
+          
+          if (invalid > 0) {
+            testResults.textContent += '\n\nInvalid drawings:';
+            invalidDrawings.forEach(item => {
+              testResults.textContent += `\n- ${item.wallKey}: ${item.issues.join(', ')}`;
+            });
+          }
+          
+          showStatus(`Validation complete: ${valid} valid, ${invalid} invalid`, invalid > 0 ? 'warning' : 'success');
+        } else {
+          testResults.textContent = `Error: ${response.status} ${response.statusText}`;
+          showStatus('Server error', 'error');
+        }
+      } catch (error) {
+        testResults.textContent = `Connection Error: ${error.message}`;
+        showStatus('Connection error', 'error');
+      }
+    }
+    
+    // Repair transparency
+    async function repairTransparency() {
+      showStatus('Repairing transparency...', 'warning');
+      
+      const repairResults = document.getElementById('repair-results');
+      repairResults.textContent = 'Fetching drawings to repair...';
+      
+      try {
+        // This needs a server-side implementation
+        repairResults.textContent = 'This feature requires server-side implementation.';
+        showStatus('Feature not implemented yet', 'warning');
+      } catch (error) {
+        repairResults.textContent = `Error: ${error.message}`;
+        showStatus('Error repairing transparency', 'error');
+      }
+    }
+    
+    // Optimize drawing sizes
+    async function optimizeDrawingSizes() {
+      showStatus('Optimizing drawing sizes...', 'warning');
+      
+      const repairResults = document.getElementById('repair-results');
+      repairResults.textContent = 'This would open the optimize.html tool in a new window.';
+      
+      window.open('optimize.html', '_blank');
+      
+      showStatus('Opened optimizer in a new window', 'success');
+    }
+    
+    // Reset all drawings
+    function confirmReset() {
+      if (confirm('Are you sure you want to delete ALL drawings? This action cannot be undone!')) {
+        resetAllDrawings();
+      }
+    }
+    
+    // Reset all drawings
+    async function resetAllDrawings() {
+      showStatus('Resetting all drawings...', 'warning');
+      
+      const repairResults = document.getElementById('repair-results');
+      repairResults.textContent = 'This feature requires server-side implementation.';
+      showStatus('Feature not implemented yet', 'warning');
+    }
+    
+    // Initialize
+    checkServerStatus();
+  </script>
+</body>
+</html>
