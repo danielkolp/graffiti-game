@@ -16,7 +16,7 @@ const io = socketIO(server, {
   },
   maxHttpBufferSize: 20e6, // Increase buffer size to 20MB
   pingTimeout: 60000, // Increase timeout to 60 seconds
-  pingInterval: 25000 // Increase ping interval to 25 seconds
+  pingInterval: 25000 
 });
 
 // Middleware
