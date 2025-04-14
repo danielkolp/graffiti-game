@@ -47,18 +47,18 @@ document.body.appendChild(debugElement);
 // Wall drawing system UI
 const drawPromptElement = document.createElement('div');
 drawPromptElement.style.position = 'absolute';
-drawPromptElement.style.top = '50%';
+drawPromptElement.style.bottom = '50px'; // Moved further down to the bottom
 drawPromptElement.style.left = '50%';
-drawPromptElement.style.transform = 'translate(-50%, -50%)';
-drawPromptElement.style.color = 'white';
-drawPromptElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-drawPromptElement.style.padding = '10px';
-drawPromptElement.style.borderRadius = '5px';
+drawPromptElement.style.transform = 'translateX(-50%)';
+drawPromptElement.style.padding = '0';
+drawPromptElement.style.borderRadius = '0';
+drawPromptElement.style.backgroundColor = 'transparent';
 drawPromptElement.style.fontFamily = 'Arial, sans-serif';
 drawPromptElement.style.fontSize = '16px';
 drawPromptElement.style.zIndex = '1000';
 drawPromptElement.style.display = 'none';
-drawPromptElement.innerText = 'Press E to draw on this wall';
+// Make the image much smaller
+drawPromptElement.innerHTML = '<img src="assets/pressE.png" alt="Press E to draw" style="width: 300px; height: auto; display: block;">'; 
 document.body.appendChild(drawPromptElement);
 
 // Drawing canvas setup
@@ -131,17 +131,144 @@ let drawingState = {
 // Store created decals for later management
 let wallDecals = [];
 
-// Create a placement indicator for the drawing
-const placementIndicator = document.createElement('div');
-placementIndicator.style.position = 'absolute';
-placementIndicator.style.width = '50px';
-placementIndicator.style.height = '50px';
-placementIndicator.style.border = '2px dashed white';
-placementIndicator.style.boxSizing = 'border-box';
-placementIndicator.style.pointerEvents = 'none';
-placementIndicator.style.zIndex = '999';
-placementIndicator.style.display = 'none';
-document.body.appendChild(placementIndicator);
+// Create a placement indicator for the drawing using Three.js
+// Instead of using an HTML element, we'll use a 3D decal for more accurate preview
+let placementDecal = null; // Will hold the preview decal mesh
+let previewMaterial = null; // Material for the preview decal
+
+// Create the preview material once
+function createPreviewMaterial() {
+  // Create a canvas for the preview texture
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  
+  // Draw a semi-transparent frame with a grid pattern
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Add a border
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+  
+  // Add grid lines
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.lineWidth = 1;
+  
+  // Vertical lines
+  for (let x = 32; x < canvas.width; x += 32) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+  
+  // Horizontal lines
+  for (let y = 32; y < canvas.height; y += 32) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+  
+  // Create a texture from the canvas
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  
+  // Create the material
+  return new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    opacity: 0.8,
+    depthTest: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    side: THREE.DoubleSide
+  });
+}
+
+// Update the placement indicator position using Three.js raycaster and decals
+function updatePlacementIndicator() {
+  if (!currentWall || !camera) return;
+  
+  // Create the preview material if it doesn't exist yet
+  if (!previewMaterial) {
+    previewMaterial = createPreviewMaterial();
+  }
+  
+  // Remove existing placement decal if it exists
+  if (placementDecal) {
+    scene.remove(placementDecal);
+    placementDecal = null;
+  }
+  
+  // Get the intersection point from either mouse positioning or camera center
+  let intersectionPoint = currentWall.point.clone();
+  
+  // If mouse positioning is enabled, use a raycaster to find where the mouse is pointing
+  if (isMousePositioningEnabled && lastMousePosition) {
+    // Convert mouse position to normalized device coordinates (-1 to +1)
+    const mouseX = (lastMousePosition.x / window.innerWidth) * 2 - 1;
+    const mouseY = -(lastMousePosition.y / window.innerHeight) * 2 + 1;
+    
+    // Set up the raycaster from the camera through the mouse position
+    mouseRaycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), camera);
+    
+    // Check for intersections with the current wall
+    const intersects = mouseRaycaster.intersectObject(currentWall.object);
+    
+    // If we found an intersection with the wall, use that position
+    if (intersects.length > 0) {
+      intersectionPoint = intersects[0].point.clone();
+    }
+  }
+  
+  // Get the normal of the wall
+  const normal = currentWall.normal.clone().normalize();
+  
+  // Choose a temporary up vector that isn't parallel to the normal
+  const tempUp = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+  
+  // Create orientation vectors
+  const right = new THREE.Vector3().crossVectors(tempUp, normal).normalize();
+  const up = new THREE.Vector3().crossVectors(normal, right).normalize();
+  
+  // Create orientation from these vectors
+  const orientation = new THREE.Euler().setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(right, up, normal)
+  );
+  
+  // Slightly offset the decal from the wall to prevent z-fighting
+  const position = intersectionPoint.clone().add(normal.clone().multiplyScalar(0.01));
+  
+  // Create decal size - a square for now, we'll use the aspect ratio of the actual drawing when saving
+  const size = new THREE.Vector3(4, 4, 0.5); 
+  
+  try {
+    // Create the decal geometry
+    const decalGeometry = new DecalGeometry(currentWall.object, position, orientation, size);
+    
+    // Create the placement decal mesh
+    placementDecal = new THREE.Mesh(decalGeometry, previewMaterial);
+    placementDecal.renderOrder = 2; // Ensure it renders on top of other decals
+    
+    // Add the decal to the scene
+    scene.add(placementDecal);
+    
+    // Store the current placement for later use when saving
+    drawingOffset = {
+      x: isMousePositioningEnabled && lastMousePosition ? 
+        lastMousePosition.x - window.innerWidth/2 : 0,
+      y: isMousePositioningEnabled && lastMousePosition ? 
+        lastMousePosition.y - window.innerHeight/2 : 0
+    };
+  } catch (e) {
+    console.error("Failed to create placement decal:", e);
+  }
+}
 
 // Wall drawings container - we'll add drawings as HTML elements here
 const wallDrawingsContainer = document.createElement('div');
@@ -156,96 +283,8 @@ document.body.appendChild(wallDrawingsContainer);
 
 // Setup raycaster for wall detection from character's perspective
 const wallRaycaster = new THREE.Raycaster();
+const mouseRaycaster = new THREE.Raycaster();
 const centerScreen = new THREE.Vector2(0, 0);
-
-// Function to check if the player is looking at a wall
-function checkWallInView() {
-  if (!camera || !scene || !character) return;
-  
-  // Use camera direction instead of character direction for wall detection
-  const cameraDirection = new THREE.Vector3();
-  camera.getWorldDirection(cameraDirection);
-  
-  // The ray should start from the character's head position
-  const rayOrigin = character.position.clone();
-  rayOrigin.y += 1.7; // Approximate head height
-  
-  // Create the raycaster using camera direction
-  wallRaycaster.set(rayOrigin, cameraDirection);
-  
-  // Check for intersections with building walls
-  const intersects = wallRaycaster.intersectObjects(collidableObjects, false);
-  
-  // Only consider intersections within a reasonable distance
-  const maxDistance = 3;
-  isLookingAtWall = false;
-  currentWall = null;
-  
-  if (intersects.length > 0 && intersects[0].distance < maxDistance) {
-    // Get the normal in world space
-    const normal = intersects[0].face.normal.clone();
-    const normalWorld = normal.transformDirection(intersects[0].object.matrixWorld);
-    
-    // If the surface is more vertical than horizontal (wall-like)
-    if (Math.abs(normalWorld.y) < 0.5) {
-      // Check if we're facing the wall (dot product between camera direction and wall normal)
-      const dotProduct = cameraDirection.dot(normalWorld);
-      
-      // If we're facing the wall (dot product is negative as normals point outward)
-      if (dotProduct < 0) {
-        isLookingAtWall = true;
-        currentWall = {
-          object: intersects[0].object,
-          point: intersects[0].point.clone(),
-          normal: normalWorld,
-          faceIndex: intersects[0].faceIndex
-        };
-        
-        // Show drawing prompt and update placement indicator
-        drawPromptElement.style.display = 'block';
-        updatePlacementIndicator();
-      }
-    }
-  }
-  
-  if (!isLookingAtWall) {
-    drawPromptElement.style.display = 'none';
-    placementIndicator.style.display = 'none';
-  }
-}
-
-// Update the placement indicator position
-function updatePlacementIndicator() {
-  if (!currentWall || !camera) return;
-  
-  // Get mouse position or use center if not in mouse positioning mode
-  let screenPosition;
-  if (isMousePositioningEnabled && lastMousePosition) {
-    screenPosition = { x: lastMousePosition.x, y: lastMousePosition.y };
-  } else {
-    // Project the 3D wall intersection point to screen coordinates
-    const point = currentWall.point.clone();
-    const vector = point.project(camera);
-    
-    // Convert to screen coordinates
-    screenPosition = {
-      x: (vector.x * 0.5 + 0.5) * window.innerWidth,
-      y: (-(vector.y * 0.5) + 0.5) * window.innerHeight
-    };
-  }
-  
-  // Show a preview that better matches the actual drawing size
-  // Size is based on distance from camera
-  const distanceFromCamera = camera.position.distanceTo(currentWall.point);
-  const previewSize = Math.min(150, 200 / (distanceFromCamera * 0.1));
-  
-  // Set the position and size of the placement indicator
-  placementIndicator.style.display = 'block';
-  placementIndicator.style.width = previewSize + 'px';
-  placementIndicator.style.height = previewSize + 'px';
-  placementIndicator.style.left = (screenPosition.x - previewSize/2) + 'px';
-  placementIndicator.style.top = (screenPosition.y - previewSize/2) + 'px';
-}
 
 // Add variables for mouse positioning
 let isMousePositioningEnabled = true; // Enable by default
@@ -487,24 +526,25 @@ function enterDrawMode() {
   // Disable controls
   cameraOrbitControls.enabled = false;
   
-  // Store the current drawing offset based on placement indicator
-  const placementRect = placementIndicator.getBoundingClientRect();
-  const canvasCenter = {
-    x: window.innerWidth / 2,
-    y: window.innerHeight / 2
-  };
-  
-  // Calculate the offset between the placement indicator center and screen center
-  drawingOffset = {
-    x: placementRect.left + placementRect.width / 2 - canvasCenter.x,
-    y: placementRect.top + placementRect.height / 2 - canvasCenter.y
-  };
+  // Store the current drawing offset and position based on the 3D placement indicator
+  if (placementDecal) {
+    // Get the position of the placement decal to use as the drawing position
+    drawingOffset = {
+      x: isMousePositioningEnabled && lastMousePosition ? 
+          lastMousePosition.x - window.innerWidth/2 : 0,
+      y: isMousePositioningEnabled && lastMousePosition ? 
+          lastMousePosition.y - window.innerHeight/2 : 0
+    };
+    
+    // Hide the placement decal
+    scene.remove(placementDecal);
+    placementDecal = null;
+  }
   
   // Show drawing canvas and controls
   drawingCanvas.style.display = 'block';
   drawingControlsElement.style.display = 'block';
   drawPromptElement.style.display = 'none';
-  placementIndicator.style.display = 'none';
   
   // Use a transparent background for the drawing canvas
   ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
@@ -1001,7 +1041,7 @@ const loader = new GLTFLoader(loadingManager);
 let collidableObjects = [];
 
 loader.load(
-    'City.glb',
+    '../City.glb',
     (gltf) => {
         console.log("GLB model loaded successfully:", gltf);
         
@@ -1251,7 +1291,7 @@ let prevAction = null;
 function loadCharacterModel() {
     const loader = new GLTFLoader(loadingManager);
     loader.load(
-        'idkbro.glb',
+        '../models/idkbro.glb',
         (gltf) => {
             console.log("GLB model loaded successfully:", gltf);
             
@@ -1552,22 +1592,25 @@ function setupGTAControls() {
 
 // Updated camera function for GTA-like behavior
 function updateGTACamera() {
-    if (!character) return;
-    
+    if (!character) {
+        console.warn("Character is not initialized yet.");
+        return; // Exit the function if character is undefined
+    }
+
     // Calculate the default position (behind character)
     const characterDirection = new THREE.Vector3(0, 0, -1).applyEuler(character.rotation);
     defaultCameraPosition = character.position.clone()
         .sub(characterDirection.clone().multiplyScalar(cameraOffset.z))
         .add(new THREE.Vector3(0, cameraOffset.y, 0));
-    
+
     defaultCameraLookAt = character.position.clone().add(cameraLookOffset);
-    
+
     // Update the orbit controls target to follow the character
     cameraOrbitControls.target.copy(character.position.clone().add(cameraLookOffset));
-    
+
     // Update orbit controls
     cameraOrbitControls.update();
-    
+
     // Update camera forward and right vectors for movement
     updateCameraDirections();
 }
@@ -1744,6 +1787,72 @@ function updateCharacterMovement() {
             playAnimation('idle');
         }
     }
+}
+
+// Function to check if the player is looking at a wall
+function checkWallInView() {
+  if (!camera || !scene || !character) return;
+  
+  // Use camera direction instead of character direction for wall detection
+  const cameraDirection = new THREE.Vector3();
+  camera.getWorldDirection(cameraDirection);
+  
+  // The ray should start from the character's head position
+  const rayOrigin = character.position.clone();
+  rayOrigin.y += 1.7; // Approximate head height
+  
+  // Create the raycaster using camera direction
+  wallRaycaster.set(rayOrigin, cameraDirection);
+  
+  // Check for intersections with building walls
+  const intersects = wallRaycaster.intersectObjects(collidableObjects, false);
+  
+  // Only consider intersections within a reasonable distance
+  const maxDistance = 3;
+  isLookingAtWall = false;
+  
+  // If we previously had a placement decal, remove it
+  if (placementDecal) {
+    scene.remove(placementDecal);
+    placementDecal = null;
+  }
+  
+  // Reset current wall
+  currentWall = null;
+  
+  if (intersects.length > 0 && intersects[0].distance < maxDistance) {
+    // Get the normal in world space
+    const normal = intersects[0].face.normal.clone();
+    const normalWorld = normal.transformDirection(intersects[0].object.matrixWorld);
+    
+    // If the surface is more vertical than horizontal (wall-like)
+    if (Math.abs(normalWorld.y) < 0.5) {
+      // Check if we're facing the wall (dot product between camera direction and wall normal)
+      const dotProduct = cameraDirection.dot(normalWorld);
+      
+      // If we're facing the wall (dot product is negative as normals point outward)
+      if (dotProduct < 0) {
+        isLookingAtWall = true;
+        currentWall = {
+          object: intersects[0].object,
+          point: intersects[0].point.clone(),
+          normal: normalWorld,
+          faceIndex: intersects[0].faceIndex
+        };
+        
+        // Show drawing prompt
+        drawPromptElement.style.display = 'block';
+        
+        // Update the 3D placement indicator
+        updatePlacementIndicator();
+      }
+    }
+  }
+  
+  // Hide drawing prompt if not looking at a wall
+  if (!isLookingAtWall) {
+    drawPromptElement.style.display = 'none';
+  }
 }
 
 // Main animation loop

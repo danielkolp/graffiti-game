@@ -41,7 +41,7 @@
             position: fixed;
             top: 10px;
             left: 10px;
-            background-color: rgba(0, 0, 0, 0.7);
+            background-color: rgba(0, 0, 0, 0.0);
             color: white;
             padding: 10px;
             border-radius: 5px;
@@ -77,26 +77,82 @@
         .connection-status.disconnected {
             background-color: rgba(255, 0, 0, 0.7);
         }
+        
+        /* Instructions Overlay Styles */
+        #instructions-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            color: white;
+        }
+        
+        .instructions-container {
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        
+        .instructions-title {
+            margin-bottom: 20px;
+            max-width: 80%;
+        }
+        
+        .instructions-content {
+            margin-bottom: 30px;
+            max-width: 80%;
+        }
+        
+        .start-button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 30px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 18px;
+            margin-top: 20px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        
+        .start-button:hover {
+            background-color: #45a049;
+        }
     </style>
 </head>
 <body>
+    <div id="instructions-overlay">
+        <div class="instructions-container">
+            <img src="assets/instructionstitle.png" alt="Instructions Title" class="instructions-title">
+            <img src="assets/instructions.png" alt="Game Instructions" class="instructions-content">
+            <button class="start-button" onclick="startGame()">START GAME</button>
+        </div>
+    </div>
+
     <div id="loading-overlay">
         <h2>Loading...</h2>
         <div id="loading-text">Initializing...</div>
     </div>
     
     <div class="instructions">
-        <h2>Controls</h2>
-        <ul>
-            <li><strong>W, A, S, D:</strong> Move character</li>
-            <li><strong>Shift:</strong> Run</li>
-            <li><strong>Space:</strong> Jump</li>
-            <li><strong>Mouse:</strong> Look around</li>
-            <li><strong>E:</strong> Draw on walls (when prompt appears)</li>            <li><strong>T:</strong> Toggle mouse positioning for drawing</li>
-            <li><strong>Escape:</strong> Cancel drawing</li>
-        </ul>
-        <p>Find a wall, look at it closely, and press E to draw! Move your mouse to position your drawing.</p>
-        <p>Your drawings will be visible to other players.</p>
+        <div style="position: relative; margin-bottom: -100px; z-index: 1001;">
+            <img src="assets/controlstitle.png" alt="Controls Title" style="display: block; max-width: 100%;">
+        </div>
+        <div>
+            <img src="assets/controls.png" alt="Game Controls" style="display: block; max-width: 100%;">
+        </div>
     </div>
     
     <div id="connection-status" class="connection-status disconnected">
@@ -105,6 +161,11 @@
     
     <script type="module" src="script.js"></script>
     <script>
+        // Function to start the game and hide the instructions overlay
+        function startGame() {
+            document.getElementById('instructions-overlay').style.display = 'none';
+        }
+        
         // Update connection status display
         window.updateConnectionStatus = function(connected) {
             const statusEl = document.getElementById('connection-status');
