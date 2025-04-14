@@ -1047,7 +1047,7 @@ let collidableObjects = [];
 
 loader.load(
 '../City.glb',
-    // '../City.glb',
+  
     (gltf) => {
         console.log("GLB model loaded successfully:", gltf);
         
