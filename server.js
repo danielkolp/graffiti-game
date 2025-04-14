@@ -28,7 +28,6 @@ app.use(express.static(path.join(__dirname)));
 const DRAWINGS_DIR = path.join(__dirname, 'drawings');
 const drawings = new Map(); // In-memory cache of drawings
 
-// Compress drawing dataURL to reduce size
 function compressDataURL(dataURL) {
   if (!dataURL || dataURL.length < 1000) return dataURL;
   
@@ -41,7 +40,7 @@ function compressDataURL(dataURL) {
   }
 }
 
-// Optimize drawing for network transmission
+
 function optimizeDrawingForTransfer(drawing) {
   if (!drawing) return drawing;
   
