@@ -145,16 +145,16 @@ function createPreviewMaterial() {
   const ctx = canvas.getContext('2d');
   
   // Draw a semi-transparent frame with a grid pattern
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   
   // Add a border
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
   ctx.lineWidth = 8;
   ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
   
   // Add grid lines
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
   ctx.lineWidth = 1;
   
   // Vertical lines
@@ -984,7 +984,7 @@ const loadingManager = new THREE.LoadingManager(
         if (loadingOverlay) {
             loadingOverlay.style.display = 'none';
         }
-        debugElement.innerText = 'Model loaded successfully';
+     
     },
     // onProgress
     (url, itemsLoaded, itemsTotal) => {
@@ -1023,10 +1023,15 @@ function createPlane() {
     const planeGeometry = new THREE.PlaneGeometry(1000, 1000);
     const planeMaterial = new THREE.MeshStandardMaterial({ 
         color: 0x999999, // Olive green
-        roughness: 0.8
+        roughness: 0.8,
+        transparent: true, // Enable transparency
+        opacity: 0.3,     // Set to semi-transparent
+        side: THREE.DoubleSide, // Render both sides
+        depthWrite: false // Prevents z-fighting with other transparent objects
     });
     const plane = new THREE.Mesh(planeGeometry, planeMaterial);
     plane.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+    plane.position.y = -0.5; // Position slightly below the origin
     plane.receiveShadow = true;
     scene.add(plane);
    
@@ -1041,7 +1046,8 @@ const loader = new GLTFLoader(loadingManager);
 let collidableObjects = [];
 
 loader.load(
-    '../City.glb',
+'../City.glb',
+    // '../City.glb',
     (gltf) => {
         console.log("GLB model loaded successfully:", gltf);
         
@@ -1217,10 +1223,14 @@ updateCharacterMovement = function() {
     }
     
     // Calculate movement speed
-    const speed = characterState.isRunning ? characterState.runSpeed : characterState.speed;
+    const baseSpeed = characterState.isRunning ? characterState.runSpeed : characterState.speed;
+    let speed = baseSpeed;
     
     // Update position with collision detection
     if (characterState.isMoving) {
+        // Check for slopes before moving
+        const slopeData = checkForSlope();
+        
         // Calculate next position
         const nextPosition = character.position.clone();
         nextPosition.x += characterState.direction.x * speed;
@@ -1237,10 +1247,14 @@ updateCharacterMovement = function() {
             character.position.z = nextPosition.z;
         }
         
-        // Debug info
-        debugElement.innerText = `Moving: ${characterState.direction.x.toFixed(2)},${characterState.direction.z.toFixed(2)} | Rotation: ${(character.rotation.y * (180/Math.PI)).toFixed(0)}°`;
-        if (collisionX || collisionZ) {
-            debugElement.innerText += " | Collision detected";
+        // If we detected a slope, adjust speed based on steepness
+        if (slopeData.onSlope) {
+            // Slow down when going uphill (slopeData.angle > 0), speed up slightly when going downhill
+            const slopeSpeedFactor = 1 - (Math.sin(slopeData.angle) * 0.5); // 0.5 to 1.5 range
+            speed *= Math.max(0.5, Math.min(1.5, slopeSpeedFactor)); // Clamp between 50% and 150% speed
+            
+            // Optional: Debug display slope info
+            // debugElement.innerText = `Slope: ${(slopeData.angle * (180/Math.PI)).toFixed(2)}° | Speed: ${(speed/baseSpeed*100).toFixed(0)}%`;
         }
     }
     
@@ -1255,10 +1269,73 @@ updateCharacterMovement = function() {
     characterState.velocity.y -= characterState.gravity;
     character.position.y += characterState.velocity.y;
     
-    // Check ground collision - adjusted to account for city floor height
-    const groundLevel = 0.05; // Same as the city's Y position
-    if (character.position.y <= groundLevel) {
-        character.position.y = groundLevel;
+    // Check ground collision - updated to use raycasting for dynamic terrain
+    const defaultGroundLevel = 0.05; // Default ground level as fallback
+    const maxStepHeight = 0.3; // Maximum height difference character can step up
+
+    // Create a downward-pointing raycaster from character's position
+    const groundRaycaster = new THREE.Raycaster();
+    const downDirection = new THREE.Vector3(0, -1, 0);
+
+    // Start the ray from slightly above the character to ensure we don't intersect with the character itself
+    const rayOrigin = character.position.clone();
+    rayOrigin.y += 0.5; // Start ray from higher position
+    groundRaycaster.set(rayOrigin, downDirection);
+
+    // Find intersections with ground/terrain objects
+    const groundIntersects = groundRaycaster.intersectObjects(collidableObjects, false);
+
+    // Get ground height if we found an intersection within a reasonable distance
+    let groundHeight = defaultGroundLevel;
+    const maxRayDistance = 2; // Maximum distance to check for ground
+
+    if (groundIntersects.length > 0 && groundIntersects[0].distance < maxRayDistance) {
+        const detectedGroundHeight = groundIntersects[0].point.y;
+        
+        // Get the normal of the ground at this point to determine the slope
+        const groundNormal = groundIntersects[0].face.normal.clone();
+        // Transform the normal to world space
+        const normalWorld = groundNormal.transformDirection(groundIntersects[0].object.matrixWorld);
+        
+        // Calculate angle between normal and up vector (0 for flat ground, positive for slopes)
+        const upVector = new THREE.Vector3(0, 1, 0);
+        const slopeAngle = upVector.angleTo(normalWorld) - Math.PI/2;
+        
+        // Display slope info for debugging
+        // debugElement.innerText = `Slope angle: ${(slopeAngle * (180/Math.PI)).toFixed(2)}°`;
+        
+        // Adjust movement speed based on slope when going uphill/downhill
+        if (characterState.isMoving && Math.abs(slopeAngle) > 0.05) {
+            // Calculate dot product between movement direction and slope direction
+            // This tells us if we're going uphill (negative) or downhill (positive)
+            const movingUphill = -characterState.direction.dot(new THREE.Vector3(normalWorld.x, 0, normalWorld.z).normalize());
+            
+            // Adjust speed more dramatically based on if we're going uphill or downhill
+            if (movingUphill > 0) {
+                // Going uphill - slow down (up to 60% slower on steep slopes)
+                const factor = 1 - (Math.abs(slopeAngle) * 2);
+                characterState.currentSpeedModifier = Math.max(0.4, factor);
+            } else {
+                // Going downhill - speed up slightly (up to 30% faster)
+                const factor = 1 + (Math.abs(slopeAngle) * 1);
+                characterState.currentSpeedModifier = Math.min(1.3, factor);
+            }
+        } else {
+            characterState.currentSpeedModifier = 1.0;
+        }
+        
+        // Only adjust height if:
+        // 1. We're falling (negative velocity)
+        // 2. OR we're moving and the height difference is within our step height
+        if (characterState.velocity.y <= 0 || 
+            (characterState.isMoving && Math.abs(detectedGroundHeight - character.position.y) <= maxStepHeight)) {
+            groundHeight = detectedGroundHeight;
+        }
+    }
+
+    // Apply ground collision with the detected height
+    if (character.position.y <= groundHeight) {
+        character.position.y = groundHeight;
         characterState.velocity.y = 0;
         characterState.isJumping = false;
     }
@@ -1277,8 +1354,54 @@ updateCharacterMovement = function() {
     }
 };
 
-
-
+// Add a new function to check for slopes in front of the character
+function checkForSlope() {
+    // Default result - not on a slope
+    const result = {
+        onSlope: false,
+        angle: 0,
+        normal: new THREE.Vector3(0, 1, 0)
+    };
+    
+    if (!character || !characterState.isMoving) return result;
+    
+    // We'll need to cast rays in the direction of movement to detect upcoming slopes
+    const forwardRaycaster = new THREE.Raycaster();
+    
+    // Calculate the ray start position (at the character's feet, slightly above ground)
+    const rayStart = character.position.clone();
+    rayStart.y += 0.2; // Slightly above the ground
+    
+    // Cast ray in the direction of movement
+    forwardRaycaster.set(rayStart, characterState.direction);
+    
+    // Check for intersections with terrain
+    const intersects = forwardRaycaster.intersectObjects(collidableObjects, false);
+    
+    // If we found an intersection within a reasonable distance
+    const maxForwardDistance = 1.5; // How far ahead to check for slopes
+    
+    if (intersects.length > 0 && intersects[0].distance < maxForwardDistance) {
+        // Get the normal of the surface we're about to walk on
+        const surfaceNormal = intersects[0].face.normal.clone();
+        // Transform the normal to world space
+        const normalWorld = surfaceNormal.clone().transformDirection(intersects[0].object.matrixWorld);
+        
+        // Calculate angle between normal and up vector
+        const upVector = new THREE.Vector3(0, 1, 0);
+        const angle = upVector.angleTo(normalWorld) - Math.PI/2;
+        
+        // If the angle is non-zero and not too steep (limit to ~30 degrees)
+        const maxSlopeAngle = Math.PI/3; // ~30 degrees
+        if (Math.abs(angle) > 0.01 && Math.abs(angle) < maxSlopeAngle) {
+            result.onSlope = true;
+            result.angle = angle;
+            result.normal = normalWorld;
+        }
+    }
+    
+    return result;
+}
 
 // Character and animation setup
 let character;
@@ -1306,13 +1429,13 @@ function loadCharacterModel() {
             character.traverse((node) => {
                 if (node.isMesh && node.material) {
                     // For a single color
-                    node.material.color.setHex(0x1B69FA); // Red color
+                    node.material.color.setHex(0xD2042D); // Red color
                     
                     // Or for different materials based on name
                     if (node.name.includes('Body')) {
-                        node.material.color.setHex(0x1B69FA); // Red for body
+                        node.material.color.setHex(0xD2042D); // Red for body
                     } else if (node.name.includes('Head')) {
-                        node.material.color.setHex(0x1B69FA); // Yellow for head
+                        node.material.color.setHex(0xD2042D); // Yellow for head
                     }
                     node.material.metalness = 0;  // Lower metalness for less reflection
                     node.material.roughness = 1;  // Higher roughness for more light scattering
@@ -1559,7 +1682,11 @@ const characterState = {
     direction: new THREE.Vector3(0, 0, 0),
     // Store the forward direction based on camera
     cameraForward: new THREE.Vector3(0, 0, -1),
-    cameraRight: new THREE.Vector3(1, 0, 0)
+    cameraRight: new THREE.Vector3(1, 0, 0),
+    // Add slope handling properties
+    currentSpeedModifier: 1.0,
+    onSlope: false,
+    slopeAngle: 0
 };
 
 // Camera control - GTA style
