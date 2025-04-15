@@ -24,7 +24,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-// Camera and controls variablesw
+// Camera and controls variables
 let cameraOrbitControls;
 let lastCameraInteractionTime = Date.now();
 
@@ -46,8 +46,6 @@ debugElement.style.fontSize = '14px';
 debugElement.style.zIndex = '1000';
 debugElement.innerText = 'Initializing scene...';
 document.body.appendChild(debugElement);
-
-// Wall drawing system UI
 const drawPromptElement = document.createElement('div');
 drawPromptElement.style.position = 'absolute';
 drawPromptElement.style.bottom = '50px'; // Moved further down to the bottom
@@ -61,7 +59,7 @@ drawPromptElement.style.fontSize = '16px';
 drawPromptElement.style.zIndex = '1000';
 drawPromptElement.style.display = 'none';
 // Make the image much smaller
-drawPromptElement.innerHTML = '<img src="assets/pressE.png" alt="Press E to draw" style="width: 300px; height: auto; display: block;">'; 
+drawPromptElement.innerHTML = '<img src="assets/pressE.png" alt="Press E to spray" style="width: 300px; height: auto; display: block;">'; 
 document.body.appendChild(drawPromptElement);
 
 // Drawing canvas setup
