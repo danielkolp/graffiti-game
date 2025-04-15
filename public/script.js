@@ -9,6 +9,9 @@ let socket = null;
 let serverConnected = false;
 let pendingDrawings = new Map(); // Track drawings being saved
 
+// Always use the render URL to avoid websocket connection issues in production
+const BACKEND_URL = 'https://graffiti-game.onrender.com'; 
+
 // Scene setup
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); // Sky blue background
@@ -2070,86 +2073,87 @@ function initializeWallDrawingSystem() {
 // Start the application
 init();
 
-// Instead of hardcoded localhost URLs, use a configurable backend URL
-const BACKEND_URL = location.hostname === 'localhost' || location.hostname === '127.0.0.1' 
-  ? 'http://localhost:3000' 
-  : 'https://your-render-backend-url.onrender.com'; // Replace with your actual Render URL
-
 // Initialize Socket.IO connection with connection recovery
 function initializeSocket() {
   try {
-    // Define reconnection parameters first before using them
-    const reconnectionAttempts = 5;
-    const reconnectionDelay = 1000;
+    console.log(`Attempting to connect to backend at: ${BACKEND_URL}`);
     
-    // Initialize socket with proper configuration
-    socket = io(BACKEND_URL, {
-      reconnectionAttempts: reconnectionAttempts,
-      reconnectionDelay: reconnectionDelay,
-      timeout: 10000,
-      pingTimeout: 60000, 
-      pingInterval: 25000
-    });
+    // Create a connection status element to show current connection state
+    const connectionStatus = document.createElement('div');
+    connectionStatus.style.position = 'absolute';
+    connectionStatus.style.bottom = '10px';
+    connectionStatus.style.right = '10px';
+    connectionStatus.style.padding = '5px 10px';
+    connectionStatus.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    connectionStatus.style.color = '#ff9900'; // Yellow warning color initially
+    connectionStatus.style.fontFamily = 'Arial, sans-serif';
+    connectionStatus.style.fontSize = '12px';
+    connectionStatus.style.borderRadius = '5px';
+    connectionStatus.style.zIndex = '1000';
+    connectionStatus.textContent = 'Connecting...';
+    document.body.appendChild(connectionStatus);
     
-    socket.on('connect', () => {
-      console.log('Connected to server');
-      serverConnected = true;
-      if (window.updateConnectionStatus) {
-        window.updateConnectionStatus(true);
+    // Add function to update connection status UI
+    window.updateConnectionStatus = function(connected) {
+      if (connected) {
+        connectionStatus.style.color = '#00cc00'; // Green for connected
+        connectionStatus.textContent = 'Online';
+        connectionStatus.title = 'Connected to server';
+      } else {
+        connectionStatus.style.color = '#ff3333'; // Red for disconnected
+        connectionStatus.textContent = 'Offline';
+        connectionStatus.title = 'Not connected to server - drawings saved locally';
       }
+    };
+    
+    // Handle offline mode - disable socket features if no server
+    if (!navigator.onLine) {
+      console.warn('Browser is offline. Socket connection will be attempted when online');
+      window.updateConnectionStatus(false);
+      
+      // Listen for online status to reconnect
+      window.addEventListener('online', () => {
+        console.log('Browser came online, attempting to reconnect socket');
+        if (socket) socket.connect();
+      });
+      
+      // Listen for offline to update status
+      window.addEventListener('offline', () => {
+        console.log('Browser went offline, socket will disconnect');
+        window.updateConnectionStatus(false);
+      });
+    }
+    
+    // Set connection options with conservative timeouts
+    const socketOptions = {
+      reconnection: true,
+      reconnectionAttempts: Infinity, // Never give up trying to reconnect
+      reconnectionDelay: 1000, // Start with 1 second delay
+      reconnectionDelayMax: 10000, // Max out at 10 seconds
+      timeout: 20000, // Connection timeout 
+      transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+      pingTimeout: 60000, // Long ping timeout
+      pingInterval: 25000, // Ping frequency
+      forceNew: true, // Create a new connection
+      autoConnect: true // Connect automatically
+    };
+     
+    // Create socket connection
+    socket = io(BACKEND_URL, socketOptions);
+    
+    // Connection event handlers
+    socket.on('connect', () => {
+      console.log('Socket connected successfully');
+      serverConnected = true;
+      window.updateConnectionStatus(true);
       
       // Re-send any pending drawings after reconnection
       if (pendingDrawings.size > 0) {
-        console.log(`Resending ${pendingDrawings.size} pending drawings after reconnection`);
+        console.log(`Re-sending ${pendingDrawings.size} pending drawings after reconnection`);
         pendingDrawings.forEach((drawingData, wallKey) => {
-          console.log(`Resending drawing: ${wallKey}`);
           socket.emit('new-drawing', drawingData);
         });
       }
-    });
-    
-    socket.on('disconnect', (reason) => {
-      console.log('Disconnected from server:', reason);
-      serverConnected = false;
-      if (window.updateConnectionStatus) {
-        window.updateConnectionStatus(false);
-      }
-      
-      // If not due to an explicit disconnect, attempt to reconnect
-      if (reason === 'io server disconnect') {
-        // the disconnection was initiated by the server, reconnect manually
-        setTimeout(() => {
-          if (socket) socket.connect();
-        }, reconnectionDelay);
-      }
-    });
-    
-    // Remove reference to maxReconnectionAttempts since it's not defined
-    socket.on('connect_error', (error) => {
-      console.error('Socket connection error:', error);
-      if (window.updateConnectionStatus) {
-        window.updateConnectionStatus(false);
-      }
-      
-      // We'll just log the error for now instead of tracking reconnection attempts
-      console.log(`Reconnection will be attempted automatically by socket.io`);
-    });
-    
-    // Fix other event handlers that reference socket
-    socket.on('drawing-update', (drawing) => {
-      if (!drawings.has(drawing.wallKey)) {
-        console.log('Received new drawing from server:', drawing.wallKey);
-        applyDrawingFromServer(drawing);
-      }
-    });
-    
-    socket.on('drawing-batch', (batchDrawings) => {
-      console.log(`Received batch of ${batchDrawings.length} drawings`);
-      batchDrawings.forEach(drawing => {
-        if (!drawings.has(drawing.wallKey)) {
-          applyDrawingFromServer(drawing);
-        }
-      });
     });
     
     socket.on('drawings-complete', () => {
