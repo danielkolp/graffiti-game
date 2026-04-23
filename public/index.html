@@ -1,182 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Character with Shared Wall Drawing</title>
-    <link rel="stylesheet" href="style.css">
-    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-            "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
-        }
-    }
-    </script>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
-        
-        #loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-            color: white;
-            flex-direction: column;
-        }
-        
-        .instructions {
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            background-color: rgba(0, 0, 0, 0.0);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            max-width: 400px;
-            font-size: 14px;
-            z-index: 1000;
-        }
-        
-        .instructions h2 {
-            margin-top: 0;
-        }
-        
-        .instructions ul {
-            padding-left: 20px;
-        }
-        
-        .connection-status {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            background-color: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 14px;
-            z-index: 1000;
-        }
-        
-        .connection-status.connected {
-            background-color: rgba(0, 128, 0, 0.7);
-        }
-        
-        .connection-status.disconnected {
-            background-color: rgba(255, 0, 0, 0.7);
-        }
-        
-        /* Instructions Overlay Styles */
-        #instructions-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.9);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 10000;
-            color: white;
-        }
-        
-        .instructions-container {
-            max-width: 800px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-        }
-        
-        .instructions-title {
-            margin-bottom: 20px;
-            max-width: 80%;
-        }
-        
-        .instructions-content {
-            margin-bottom: 30px;
-            max-width: 80%;
-        }
-        
-        .start-button {
-            background-color: #4CAF50;
-            border: none;
-            color: white;
-            padding: 15px 30px;
-            text-align: center;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 18px;
-            margin-top: 20px;
-            cursor: pointer;
-            border-radius: 5px;
-            transition: background-color 0.3s;
-        }
-        
-        .start-button:hover {
-            background-color: #45a049;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graffiti Runner 3D</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <div id="instructions-overlay">
-        <div class="instructions-container">
-            <img src="assets/instructionstitle.png" alt="Instructions Title" class="instructions-title">
-            <img src="assets/instructions.png" alt="Game Instructions" class="instructions-content">
-            <button class="start-button" onclick="startGame()">START GAME</button>
-        </div>
+  <div id="loading-overlay" class="overlay">
+    <div class="loading-panel">
+      <h1>Loading World</h1>
+      <div id="loading-label">Starting 0%</div>
+      <div class="loading-progress-track">
+        <div id="loading-progress-fill" class="loading-progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="instructions-overlay" class="overlay intro-overlay">
+    <div class="intro-content">
+      <img src="assets/instructionstitle.png" alt="Instructions" class="intro-title" />
+      <img src="assets/instructions.png" alt="How to Play" class="intro-sheet" />
+      <button id="start-game-button" class="primary-button">Start Session</button>
+    </div>
+  </div>
+
+  <div id="hud-root">
+    <div id="crosshair"></div>
+
+    <div class="hud-block controls-block">
+      <img src="assets/controlstitle.png" alt="Controls" class="controls-title" />
+      <img src="assets/controls.png" alt="Control Layout" class="controls-image" />
     </div>
 
-    <div id="loading-overlay">
-        <h2>Loading...</h2>
-        <div id="loading-text">Initializing...</div>
+    <div id="connection-status" class="hud-chip disconnected">Offline</div>
+
+    <div id="draw-prompt" class="draw-prompt">Press E to paint</div>
+
+    <div id="draw-hud" class="draw-hud">
+      <div class="draw-row">
+        <label for="stroke-color">Color</label>
+        <input id="stroke-color" type="color" value="#ff3d3d" />
+      </div>
+      <div class="draw-row">
+        <label for="stroke-size">Thickness</label>
+        <input id="stroke-size" type="range" min="1" max="24" value="6" />
+        <span id="stroke-size-value">6px</span>
+      </div>
+      <div class="draw-row tool-row">
+        <button id="tool-brush" class="tool-button active">Brush</button>
+        <button id="tool-erase" class="tool-button">Erase</button>
+      </div>
     </div>
-    
-    <div class="instructions">
-        <div style="position: relative; margin-bottom: -100px; z-index: 1001;">
-            <img src="assets/controlstitle.png" alt="Controls Title" style="display: block; max-width: 100%;">
-        </div>
-        <div>
-            <img src="assets/controls.png" alt="Game Controls" style="display: block; max-width: 100%;">
-        </div>
-    </div>
-    
-    <div id="connection-status" class="connection-status disconnected">
-        Offline Mode
-    </div>
-    
-    <script type="module" src="script.js"></script>
-    <script>
-        // Function to start the game and hide the instructions overlay
-        function startGame() {
-            document.getElementById('instructions-overlay').style.display = 'none';
-        }
-        
-        // Update connection status display
-        window.updateConnectionStatus = function(connected) {
-            const statusEl = document.getElementById('connection-status');
-            if (connected) {
-                statusEl.textContent = 'Connected - Drawings Shared';
-                statusEl.className = 'connection-status connected';
-            } else {
-                statusEl.textContent = 'Offline Mode';
-                statusEl.className = 'connection-status disconnected';
-            }
-        };
-    </script>
+
+    <div id="debug-panel" class="debug-panel">FPS 0 | Draw 0 | Triangles 0 | Memory n/a</div>
+  </div>
+
+  <script>
+    window.__graffitiBoot = { started: false };
+    setTimeout(() => {
+      if (window.__graffitiBoot?.started) {
+        return;
+      }
+      const loadingLabel = document.getElementById('loading-label');
+      const loadingFill = document.getElementById('loading-progress-fill');
+      const loadingPanel = document.querySelector('.loading-panel');
+      if (loadingFill) {
+        loadingFill.style.width = '100%';
+      }
+      if (loadingPanel) {
+        loadingPanel.classList.add('boot-error');
+      }
+      if (loadingLabel) {
+        loadingLabel.textContent = 'Startup failed. Run `npm start` in graffiti-game and open http://127.0.0.1:3000/public/index.html';
+      }
+      console.error('Bootstrap timeout: startup failed after 8s');
+    }, 8000);
+  </script>
+  <script src="dist/app.js?v=20260422-livepreview"></script>
 </body>
 </html>

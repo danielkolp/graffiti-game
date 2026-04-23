@@ -3,350 +3,392 @@ const http = require('http');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
-const zlib = require('zlib'); // For data compression
 
-// Initialize Express app
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: '*',
+    methods: ['GET', 'POST']
   },
-  maxHttpBufferSize: 20e6, // Increase buffer size to 20MB
-  pingTimeout: 60000, // Increase timeout to 60 seconds
-  pingInterval: 25000 // Increase ping interval to 25 seconds
+  maxHttpBufferSize: 1e6,
+  pingTimeout: 25000,
+  pingInterval: 10000
 });
 
-// Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' })); // For handling large base64 images
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname)));
 
-// Data storage - in production, consider using a database
-const DRAWINGS_DIR = path.join(__dirname, 'drawings');
-const drawings = new Map(); // In-memory cache of drawings
+const STORAGE_ROOT = path.join(__dirname, 'drawings');
+const STROKES_DIR = path.join(STORAGE_ROOT, 'strokes');
 
-// Compress drawing dataURL to reduce size
-function compressDataURL(dataURL) {
-  if (!dataURL || dataURL.length < 1000) return dataURL;
-  
-  try {
-    // Just truncate the data for network transfer - full data will be available via API
-    return dataURL.substring(0, 100) + '...[compressed, full data available via API]';
-  } catch (error) {
-    console.error('Error compressing dataURL:', error);
-    return dataURL;
-  }
+const MAX_STROKES = 12000;
+const MAX_POINTS_PER_STROKE = 320;
+const MAX_ERASE_TARGETS = 64;
+
+const strokes = new Map();
+const players = new Map();
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-// Optimize drawing for network transmission
-function optimizeDrawingForTransfer(drawing) {
-  if (!drawing) return drawing;
-  
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function sanitizeVec3Array(vector) {
+  if (!Array.isArray(vector) || vector.length !== 3) {
+    return null;
+  }
+
+  const x = Number(vector[0]);
+  const y = Number(vector[1]);
+  const z = Number(vector[2]);
+
+  if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(z)) {
+    return null;
+  }
+
+  return [x, y, z];
+}
+
+function sanitizePatch(patch) {
+  if (!patch || typeof patch !== 'object') {
+    return null;
+  }
+
+  const center = sanitizeVec3Array(patch.center);
+  const normal = sanitizeVec3Array(patch.normal);
+  const tangent = sanitizeVec3Array(patch.tangent);
+  const bitangent = sanitizeVec3Array(patch.bitangent);
+  const halfSize = Number(patch.halfSize);
+
+  if (!center || !normal || !tangent || !bitangent || !isFiniteNumber(halfSize)) {
+    return null;
+  }
+
+  const meshId = Number.isFinite(Number(patch.meshId)) ? Number(patch.meshId) : -1;
+
   return {
-    wallKey: drawing.wallKey,
-    position: drawing.position,
-    normal: drawing.normal,
-    size: drawing.size,
-    timestamp: drawing.timestamp,
-    // Send compressed version of the dataURL for socket transfers
-    dataURL: compressDataURL(drawing.dataURL),
-    isCompressed: true,
-    // Make sure to indicate it uses transparency
-    hasTransparency: true 
+    key: typeof patch.key === 'string' ? patch.key : '',
+    meshId,
+    center,
+    normal,
+    tangent,
+    bitangent,
+    halfSize: clamp(halfSize, 0.5, 8)
   };
 }
 
-// Create drawings directory if it doesn't exist
-function initializeStorage() {
-  console.log('Initializing drawing storage...');
-  
-  // Create drawings directory if it doesn't exist
-  if (!fs.existsSync(DRAWINGS_DIR)) {
-    console.log(`Creating drawings directory at ${DRAWINGS_DIR}`);
-    fs.mkdirSync(DRAWINGS_DIR, { recursive: true });
+function sanitizeStrokePacket(packet, playerId) {
+  if (!packet || typeof packet !== 'object') {
+    return null;
   }
-  
-  // Load existing drawings from disk
-  try {
-    const files = fs.readdirSync(DRAWINGS_DIR);
-    console.log(`Found ${files.length} files in drawings directory`);
-    
-    let loadedCount = 0;
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        try {
-          const filePath = path.join(DRAWINGS_DIR, file);
-          const data = fs.readFileSync(filePath, 'utf8');
-          const drawing = JSON.parse(data);
-          
-          // Ensure the drawing has all required fields before adding it
-          if (drawing && drawing.wallKey && drawing.dataURL) {
-            drawings.set(drawing.wallKey, drawing);
-            loadedCount++;
-          } else {
-            console.warn(`Skipping invalid drawing file: ${file}`);
-          }
-        } catch (fileError) {
-          console.error(`Error loading drawing file ${file}:`, fileError);
-        }
+
+  if (packet.erase === true) {
+    if (typeof packet.id !== 'string' || !Array.isArray(packet.targets)) {
+      return null;
+    }
+
+    const targets = packet.targets
+      .filter((target) => typeof target === 'string')
+      .slice(0, MAX_ERASE_TARGETS);
+
+    return {
+      id: packet.id,
+      erase: true,
+      patchKey: typeof packet.patchKey === 'string' ? packet.patchKey : '',
+      targets,
+      createdAt: Number(packet.createdAt) || Date.now(),
+      playerId
+    };
+  }
+
+  if (
+    typeof packet.id !== 'string' ||
+    typeof packet.patchKey !== 'string' ||
+    !packet.patch ||
+    !Array.isArray(packet.points)
+  ) {
+    return null;
+  }
+
+  const patch = sanitizePatch(packet.patch);
+  if (!patch) {
+    return null;
+  }
+
+  if (packet.points.length < 4 || packet.points.length > MAX_POINTS_PER_STROKE * 2 || packet.points.length % 2 !== 0) {
+    return null;
+  }
+
+  const quantization = Number(packet.q);
+  if (!isFiniteNumber(quantization) || quantization <= 0 || quantization > 10000) {
+    return null;
+  }
+
+  const points = [];
+  for (let i = 0; i < packet.points.length; i += 1) {
+    const value = Number(packet.points[i]);
+    if (!Number.isInteger(value) || value < -32768 || value > 32767) {
+      return null;
+    }
+    points.push(value);
+  }
+
+  const color = typeof packet.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(packet.color)
+    ? packet.color
+    : '#ff3d3d';
+
+  const thickness = clamp(Number(packet.thickness) || 6, 1, 24);
+
+  return {
+    v: 1,
+    id: packet.id,
+    patchKey: packet.patchKey,
+    patch,
+    color,
+    thickness,
+    q: quantization,
+    points,
+    createdAt: Number(packet.createdAt) || Date.now(),
+    playerId
+  };
+}
+
+function sanitizePlayerState(payload, socketId) {
+  if (!payload || typeof payload !== 'object' || !payload.position) {
+    return null;
+  }
+
+  const x = Number(payload.position.x);
+  const y = Number(payload.position.y);
+  const z = Number(payload.position.z);
+  const rotationY = Number(payload.rotationY) || 0;
+
+  if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(z)) {
+    return null;
+  }
+
+  return {
+    id: socketId,
+    position: {
+      x: clamp(x, -5000, 5000),
+      y: clamp(y, -100, 500),
+      z: clamp(z, -5000, 5000)
+    },
+    rotationY,
+    timestamp: Date.now()
+  };
+}
+
+function strokePath(strokeId) {
+  const safeId = strokeId.replace(/[^a-zA-Z0-9-_]/g, '_');
+  return path.join(STROKES_DIR, `${safeId}.json`);
+}
+
+async function ensureStorage() {
+  await fsp.mkdir(STROKES_DIR, { recursive: true });
+}
+
+async function loadStrokesFromDisk() {
+  await ensureStorage();
+  const files = await fsp.readdir(STROKES_DIR);
+
+  let loaded = 0;
+  for (const file of files) {
+    if (!file.endsWith('.json')) {
+      continue;
+    }
+
+    try {
+      const payload = await fsp.readFile(path.join(STROKES_DIR, file), 'utf8');
+      const parsed = JSON.parse(payload);
+      const sanitized = sanitizeStrokePacket(parsed, parsed.playerId || 'persisted');
+      if (!sanitized || sanitized.erase) {
+        continue;
       }
+      strokes.set(sanitized.id, sanitized);
+      loaded += 1;
+    } catch (error) {
+      console.error(`Failed to load stroke file ${file}:`, error.message);
     }
-    console.log(`Loaded ${loadedCount} drawings from disk`);
-  } catch (readError) {
-    console.error(`Error reading drawings directory:`, readError);
   }
+
+  console.log(`Loaded ${loaded} strokes from disk`);
 }
 
-// Save a drawing to disk with optimization
-function saveDrawingToDisk(drawing) {
+async function saveStrokeToDisk(stroke) {
   try {
-    // Create a safe filename
-    const safeKey = drawing.wallKey.replace(/[^a-zA-Z0-9-_]/g, '_');
-    const filePath = path.join(DRAWINGS_DIR, `${safeKey}.json`);
-    
-    // Keep transparency by ensuring we keep PNG format
-    // Add a flag to indicate this drawing should maintain transparency
-    const optimizedDrawing = { 
-      ...drawing,
-      hasTransparency: true
-    };
-    
-    // Save to disk
-    fs.writeFileSync(filePath, JSON.stringify(optimizedDrawing));
-    console.log(`Drawing saved to ${filePath} (Size: ${optimizedDrawing.dataURL.length} chars)`);
-    return true;
+    await fsp.writeFile(strokePath(stroke.id), JSON.stringify(stroke));
   } catch (error) {
-    console.error('Error saving drawing to disk:', error);
-    return false;
+    console.error('Failed to persist stroke:', error.message);
   }
 }
 
-// API endpoint to save a drawing
-app.post('/api/drawings', (req, res) => {
+async function deleteStrokeFromDisk(strokeId) {
+  const target = strokePath(strokeId);
   try {
-    const { wallKey, dataURL, position, normal, size } = req.body;
-    
-    if (!wallKey || !dataURL) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (fs.existsSync(target)) {
+      await fsp.unlink(target);
     }
-    
-    console.log(`Saving drawing with key: ${wallKey} (Data size: ${dataURL.length} chars)`);
-    
-    const drawing = {
-      wallKey,
-      dataURL,
-      position,
-      normal,
-      size,
-      timestamp: new Date().toISOString()
-    };
-    
-    // Save to memory
-    drawings.set(wallKey, drawing);
-    
-    // Save to disk in background to not block the response
-    setTimeout(() => saveDrawingToDisk(drawing), 0);
-    
-    // Send immediate success response first
-    res.status(201).json({ success: true });
-    
-    // Then broadcast to clients with optimized data
-    const optimizedDrawing = optimizeDrawingForTransfer(drawing);
-    io.emit('drawing-update', optimizedDrawing);
-    
-  } catch (err) {
-    console.error('Error saving drawing:', err);
-    res.status(500).json({ error: 'Failed to save drawing' });
+  } catch (error) {
+    console.error(`Failed to delete stroke ${strokeId}:`, error.message);
   }
-});
+}
 
-// Debug endpoint to check server status and drawing count
+async function pruneStrokeCacheIfNeeded() {
+  if (strokes.size <= MAX_STROKES) {
+    return;
+  }
+
+  const ordered = Array.from(strokes.values())
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  const removeCount = strokes.size - MAX_STROKES;
+  const removeList = ordered.slice(0, removeCount);
+
+  for (const stroke of removeList) {
+    strokes.delete(stroke.id);
+    await deleteStrokeFromDisk(stroke.id);
+  }
+}
+
+function getSerializablePlayers() {
+  return Array.from(players.values());
+}
+
+function getSerializableStrokes() {
+  return Array.from(strokes.values())
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
 app.get('/api/status', (req, res) => {
   res.json({
     status: 'running',
-    drawingsCount: drawings.size,
-    drawingsList: Array.from(drawings.keys())
+    strokes: strokes.size,
+    players: players.size
   });
 });
 
-// API endpoint to get all drawings
+app.get('/api/state', (req, res) => {
+  res.json({
+    serverTime: Date.now(),
+    strokes: getSerializableStrokes(),
+    players: getSerializablePlayers()
+  });
+});
+
+app.get('/api/strokes', (req, res) => {
+  res.json(getSerializableStrokes());
+});
+
+app.post('/api/strokes', async (req, res) => {
+  const stroke = sanitizeStrokePacket(req.body, 'rest');
+  if (!stroke || stroke.erase) {
+    res.status(400).json({ error: 'Invalid stroke payload' });
+    return;
+  }
+
+  if (strokes.has(stroke.id)) {
+    res.status(200).json({ ok: true, deduped: true });
+    return;
+  }
+
+  strokes.set(stroke.id, stroke);
+  await saveStrokeToDisk(stroke);
+  await pruneStrokeCacheIfNeeded();
+
+  io.emit('stroke:add', stroke);
+  res.status(201).json({ ok: true });
+});
+
 app.get('/api/drawings', (req, res) => {
-  try {
-    const drawingsArray = Array.from(drawings.values());
-    console.log(`Returning ${drawingsArray.length} drawings`);
-    
-    // Validate drawings before sending
-    const validDrawings = drawingsArray.filter(drawing => {
-      const isValid = drawing && drawing.wallKey && drawing.dataURL;
-      if (!isValid) {
-        console.warn(`Found invalid drawing: ${drawing ? drawing.wallKey : 'undefined'}`);
-      }
-      return isValid;
-    });
-    
-    console.log(`Filtered to ${validDrawings.length} valid drawings`);
-    
-    // Send optimized versions of drawings
-    const optimizedDrawings = validDrawings.map(optimizeDrawingForTransfer);
-    
-    // Add a flag indicating these are optimized for transport
-    const result = optimizedDrawings.map(drawing => ({
-      ...drawing,
-      _optimizedForTransport: true
-    }));
-    
-    res.json(result);
-  } catch (error) {
-    console.error('Error returning drawings:', error);
-    res.status(500).json({ error: 'Failed to retrieve drawings' });
-  }
+  res.json(getSerializableStrokes());
 });
 
-// API endpoint to get a specific drawing
-app.get('/api/drawings/:wallKey', (req, res) => {
-  const { wallKey } = req.params;
-  const drawing = drawings.get(wallKey);
-  
-  if (drawing) {
-    res.json(drawing);
-  } else {
-    res.status(404).json({ error: 'Drawing not found' });
-  }
-});
-
-// API endpoint to get a specific drawing with full data
-app.get('/api/drawings/:wallKey/full', (req, res) => {
-  const { wallKey } = req.params;
-  const drawing = drawings.get(wallKey);
-  
-  if (drawing) {
-    // Add cache control headers to help browser caching
-    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
-    res.json(drawing); // Send the full uncompressed version
-  } else {
-    console.error(`Drawing not found: ${wallKey}`);
-    res.status(404).json({ error: 'Drawing not found' });
-  }
-});
-
-// Improve the endpoint to check a specific drawing's data
-app.get('/api/drawings/:wallKey/debug', (req, res) => {
-  const { wallKey } = req.params;
-  const drawing = drawings.get(wallKey);
-  
-  if (drawing) {
-    const debugInfo = {
-      wallKey: drawing.wallKey,
-      hasData: !!drawing.dataURL,
-      dataURLLength: drawing.dataURL ? drawing.dataURL.length : 0,
-      dataURLStart: drawing.dataURL ? drawing.dataURL.substring(0, 50) + '...' : null,
-      dataURLValid: drawing.dataURL ? drawing.dataURL.startsWith('data:image/') : false,
-      position: drawing.position,
-      normal: drawing.normal,
-      timestamp: drawing.timestamp,
-    };
-    res.json(debugInfo);
-  } else {
-    res.status(404).json({ error: 'Drawing not found' });
-  }
-});
-
-// Debug endpoint to list all wall keys
-app.get('/api/debug/walls', (req, res) => {
-  try {
-    const wallKeys = Array.from(drawings.keys());
-    res.json({
-      count: wallKeys.length,
-      walls: wallKeys
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error retrieving wall keys' });
-  }
-});
-
-// Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
-  
-  // Send initial drawings gradually to avoid overwhelming
-  const drawingsArray = Array.from(drawings.values());
-  console.log(`Sending ${drawingsArray.length} drawings to new client in batches`);
-  
-  // Send in batches of 5 optimized drawings
-  const batchSize = 5;
-  const optimizedDrawings = drawingsArray.map(optimizeDrawingForTransfer);
-  
-  // Process each batch
-  for (let i = 0; i < optimizedDrawings.length; i += batchSize) {
-    const batch = optimizedDrawings.slice(i, i + batchSize);
-    setTimeout(() => {
-      if (socket.connected) {
-        socket.emit('drawing-batch', batch);
-      }
-    }, i * 100); // Bigger delay between batches to reduce load
-  }
-  
-  // Signal when all drawings have been sent
-  setTimeout(() => {
-    if (socket.connected) {
-      socket.emit('drawings-complete');
-    }
-  }, (Math.ceil(drawingsArray.length / batchSize) + 1) * 100);
-  
-  socket.on('new-drawing', (drawing) => {
-    if (!drawing || !drawing.wallKey || !drawing.dataURL) {
-      console.error('Received invalid drawing data');
+  console.log(`Socket connected: ${socket.id}`);
+
+  socket.emit('state:init', {
+    serverTime: Date.now(),
+    strokes: getSerializableStrokes(),
+    players: getSerializablePlayers()
+  });
+
+  socket.on('player:join', (payload) => {
+    const player = sanitizePlayerState(payload, socket.id);
+    if (!player) {
       return;
     }
-    
-    console.log(`Received new drawing via socket with key: ${drawing.wallKey} (size: ${drawing.dataURL.length} chars)`);
-    
-    try {
-      // Save to memory
-      drawings.set(drawing.wallKey, drawing);
-      
-      // Save to disk asynchronously
-      setTimeout(() => saveDrawingToDisk(drawing), 0);
-      
-      // Broadcast to other clients - with reduced data
-      const optimizedDrawing = optimizeDrawingForTransfer(drawing);
-      socket.broadcast.emit('drawing-update', optimizedDrawing);
-      
-      // Acknowledge receipt to the sender
-      socket.emit('drawing-received', { wallKey: drawing.wallKey });
-    } catch (error) {
-      console.error('Error processing drawing:', error);
-      socket.emit('drawing-error', { 
-        wallKey: drawing.wallKey,
-        error: 'Server error processing drawing'
-      });
+
+    players.set(socket.id, player);
+    io.emit('player:update', player);
+  });
+
+  socket.on('player:update', (payload) => {
+    const player = sanitizePlayerState(payload, socket.id);
+    if (!player) {
+      return;
     }
+
+    players.set(socket.id, player);
+    socket.broadcast.emit('player:update', player);
   });
-  
-  // Handle client errors gracefully
-  socket.on('error', (error) => {
-    console.error('Socket client error:', error);
+
+  socket.on('stroke:add', async (payload) => {
+    const packet = sanitizeStrokePacket(payload, socket.id);
+    if (!packet) {
+      return;
+    }
+
+    if (packet.erase === true) {
+      for (const strokeId of packet.targets) {
+        strokes.delete(strokeId);
+        await deleteStrokeFromDisk(strokeId);
+      }
+      io.emit('stroke:add', packet);
+      return;
+    }
+
+    if (strokes.has(packet.id)) {
+      return;
+    }
+
+    strokes.set(packet.id, packet);
+    await saveStrokeToDisk(packet);
+    await pruneStrokeCacheIfNeeded();
+
+    io.emit('stroke:add', packet);
   });
-  
-  socket.on('disconnect', (reason) => {
-    console.log(`User disconnected: ${socket.id}, reason: ${reason}`);
+
+  socket.on('disconnect', () => {
+    players.delete(socket.id);
+    io.emit('player:leave', { id: socket.id });
+    console.log(`Socket disconnected: ${socket.id}`);
   });
 });
 
-// Error handling for server
 server.on('error', (error) => {
   console.error('Server error:', error);
 });
 
-// Initialize storage before starting server
-initializeStorage();
+(async () => {
+  try {
+    await loadStrokesFromDisk();
 
-// Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`Drawings stored in ${DRAWINGS_DIR}`);
-});
+    const PORT = process.env.PORT || 3000;
+    server.listen(PORT, () => {
+      console.log(`Server running on http://127.0.0.1:${PORT}`);
+      console.log(`Open client at http://127.0.0.1:${PORT}/public/index.html`);
+      console.log(`Persisted strokes: ${strokes.size}`);
+    });
+  } catch (error) {
+    console.error('Startup failed:', error);
+    process.exit(1);
+  }
+})();
