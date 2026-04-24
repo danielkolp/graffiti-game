@@ -11,8 +11,7 @@ export class MovementSystem {
       back: false,
       left: false,
       right: false,
-      run: false,
-      jumpQueued: false
+      run: false
     };
 
     this.horizontalVelocity = new THREE.Vector3();
@@ -23,7 +22,6 @@ export class MovementSystem {
     this.acceleration = 16;
     this.deceleration = 12;
     this.gravity = 24;
-    this.jumpSpeed = 8.2;
 
     this.playerCollider = new Capsule(
       new THREE.Vector3(0, 0.35, 0),
@@ -40,10 +38,7 @@ export class MovementSystem {
     this.onGround = false;
     this.airborneTime = 0;
     this.jumpGraceSeconds = 0.12;
-    this.jumpBufferSeconds = 0.14;
-    this.jumpBufferTimer = 0;
-    this.coyoteTimeSeconds = 0.12;
-    this.coyoteTimer = 0;
+    this.groundContactRiseTolerance = 0.25;
     this.idleCollisionSkipCounter = 0;
     this.idleCollisionSkipEvery = 2;
 
@@ -56,8 +51,6 @@ export class MovementSystem {
       this.resetInputs();
       this.horizontalVelocity.set(0, 0, 0);
       this.verticalVelocity = 0;
-      this.jumpBufferTimer = 0;
-      this.coyoteTimer = 0;
       this.airborneTime = 0;
     }
   }
@@ -68,8 +61,14 @@ export class MovementSystem {
     this.input.left = false;
     this.input.right = false;
     this.input.run = false;
-    this.input.jumpQueued = false;
-    this.jumpBufferTimer = 0;
+  }
+
+  _haltHorizontalMotion() {
+    this.resetInputs();
+    this.horizontalVelocity.x = 0;
+    this.horizontalVelocity.z = 0;
+    this.tempTargetVelocity.x = 0;
+    this.tempTargetVelocity.z = 0;
   }
 
   syncColliderFromPlayer(playerObject) {
@@ -85,16 +84,6 @@ export class MovementSystem {
 
     const dt = clamp(deltaSeconds, 0, 0.05);
     this.syncColliderFromPlayer(playerObject);
-
-    if (this.jumpBufferTimer > 0) {
-      this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
-    }
-
-    if (this.onGround) {
-      this.coyoteTimer = this.coyoteTimeSeconds;
-    } else {
-      this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
-    }
 
     if (!this.enabled) {
       return this._applyPassivePhysics(playerObject, dt);
@@ -119,18 +108,7 @@ export class MovementSystem {
     this.horizontalVelocity.x = damp(this.horizontalVelocity.x, this.tempTargetVelocity.x, accel, dt);
     this.horizontalVelocity.z = damp(this.horizontalVelocity.z, this.tempTargetVelocity.z, accel, dt);
 
-    let justJumped = false;
-    if (this.input.jumpQueued) {
-      this.jumpBufferTimer = this.jumpBufferSeconds;
-    }
-    if (this.jumpBufferTimer > 0 && (this.onGround || this.coyoteTimer > 0)) {
-      this.verticalVelocity = this.jumpSpeed;
-      this.onGround = false;
-      this.coyoteTimer = 0;
-      this.jumpBufferTimer = 0;
-      justJumped = true;
-    }
-    this.input.jumpQueued = false;
+    const justJumped = false;
 
     if (!this.onGround) {
       this.verticalVelocity -= this.gravity * dt;
@@ -159,9 +137,11 @@ export class MovementSystem {
 
       if (collisionResult) {
         this.playerCollider.translate(collisionResult.normal.multiplyScalar(collisionResult.depth));
-        if (collisionResult.normal.y > 0.25) {
+        if (collisionResult.normal.y > 0.25 && this.verticalVelocity <= this.groundContactRiseTolerance) {
           this.onGround = true;
           this.verticalVelocity = Math.max(this.verticalVelocity, 0);
+        } else if (collisionResult.normal.y < -0.25 && this.verticalVelocity > 0) {
+          this.verticalVelocity = 0;
         }
       }
     }
@@ -213,8 +193,10 @@ export class MovementSystem {
         const collisionResult = this.worldOctree.capsuleIntersect(this.playerCollider);
         if (collisionResult) {
           this.playerCollider.translate(collisionResult.normal.multiplyScalar(collisionResult.depth));
-          if (collisionResult.normal.y > 0.25) {
+          if (collisionResult.normal.y > 0.25 && this.verticalVelocity <= this.groundContactRiseTolerance) {
             this.onGround = true;
+            this.verticalVelocity = 0;
+          } else if (collisionResult.normal.y < -0.25 && this.verticalVelocity > 0) {
             this.verticalVelocity = 0;
           }
         }
@@ -274,10 +256,7 @@ export class MovementSystem {
           this.input.run = true;
           break;
         case 'Space':
-          if (!event.repeat) {
-            this.input.jumpQueued = true;
-            this.jumpBufferTimer = this.jumpBufferSeconds;
-          }
+          event.preventDefault();
           break;
         default:
           break;
@@ -308,13 +287,17 @@ export class MovementSystem {
     });
 
     window.addEventListener('blur', () => {
-      this.resetInputs();
+      this._haltHorizontalMotion();
     });
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        this.resetInputs();
+        this._haltHorizontalMotion();
       }
+    });
+
+    window.addEventListener('pagehide', () => {
+      this._haltHorizontalMotion();
     });
   }
 }

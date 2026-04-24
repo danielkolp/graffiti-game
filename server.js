@@ -5,6 +5,8 @@ const cors = require('cors');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const { spawn } = require('child_process');
+const { pack, unpack } = require('msgpackr');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,6 +23,32 @@ const io = socketIO(server, {
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname)));
+
+let clientWatchProcess = null;
+const watchClient = process.argv.includes('--watch-client') || process.env.WATCH_CLIENT === '1';
+
+if (watchClient) {
+  clientWatchProcess = spawn(process.execPath, [path.join(__dirname, 'scripts', 'build-client.mjs'), '--watch'], {
+    stdio: 'inherit',
+    windowsHide: true
+  });
+
+  const stopClientWatch = () => {
+    if (clientWatchProcess && !clientWatchProcess.killed) {
+      clientWatchProcess.kill();
+    }
+  };
+
+  process.on('exit', stopClientWatch);
+  process.on('SIGINT', () => {
+    stopClientWatch();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    stopClientWatch();
+    process.exit(0);
+  });
+}
 
 const STORAGE_ROOT = path.join(__dirname, 'drawings');
 const STROKES_DIR = path.join(STORAGE_ROOT, 'strokes');
@@ -188,7 +216,10 @@ function sanitizePlayerState(payload, socketId) {
 
 function strokePath(strokeId) {
   const safeId = strokeId.replace(/[^a-zA-Z0-9-_]/g, '_');
-  return path.join(STROKES_DIR, `${safeId}.json`);
+  return {
+    binary: path.join(STROKES_DIR, `${safeId}.mpk`),
+    legacyJson: path.join(STROKES_DIR, `${safeId}.json`)
+  };
 }
 
 async function ensureStorage() {
@@ -201,13 +232,22 @@ async function loadStrokesFromDisk() {
 
   let loaded = 0;
   for (const file of files) {
-    if (!file.endsWith('.json')) {
+    if (!file.endsWith('.json') && !file.endsWith('.mpk')) {
       continue;
     }
 
     try {
-      const payload = await fsp.readFile(path.join(STROKES_DIR, file), 'utf8');
-      const parsed = JSON.parse(payload);
+      const absolutePath = path.join(STROKES_DIR, file);
+      let parsed = null;
+
+      if (file.endsWith('.mpk')) {
+        const payload = await fsp.readFile(absolutePath);
+        parsed = unpack(payload);
+      } else {
+        const payload = await fsp.readFile(absolutePath, 'utf8');
+        parsed = JSON.parse(payload);
+      }
+
       const sanitized = sanitizeStrokePacket(parsed, parsed.playerId || 'persisted');
       if (!sanitized || sanitized.erase) {
         continue;
@@ -223,8 +263,13 @@ async function loadStrokesFromDisk() {
 }
 
 async function saveStrokeToDisk(stroke) {
+  const target = strokePath(stroke.id);
   try {
-    await fsp.writeFile(strokePath(stroke.id), JSON.stringify(stroke));
+    await fsp.writeFile(target.binary, pack(stroke));
+
+    if (fs.existsSync(target.legacyJson)) {
+      await fsp.unlink(target.legacyJson);
+    }
   } catch (error) {
     console.error('Failed to persist stroke:', error.message);
   }
@@ -233,8 +278,11 @@ async function saveStrokeToDisk(stroke) {
 async function deleteStrokeFromDisk(strokeId) {
   const target = strokePath(strokeId);
   try {
-    if (fs.existsSync(target)) {
-      await fsp.unlink(target);
+    if (fs.existsSync(target.binary)) {
+      await fsp.unlink(target.binary);
+    }
+    if (fs.existsSync(target.legacyJson)) {
+      await fsp.unlink(target.legacyJson);
     }
   } catch (error) {
     console.error(`Failed to delete stroke ${strokeId}:`, error.message);

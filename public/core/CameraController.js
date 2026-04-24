@@ -26,7 +26,7 @@ export class CameraController {
     this.desiredPosition = new THREE.Vector3();
     this.tempOffset = new THREE.Vector3();
 
-    this.chaseDistance = 6.4;
+    this.chaseDistance = 12.5;
     this.minChaseDistance = 2.4;
     this.maxChaseDistance = 12.5;
     this.zoomSensitivity = 0.01;

@@ -1,4 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Sora:wght@400;500;600;700&display=swap');
+
+@font-face {
+  font-family: 'Consolas Local';
+  src: url('assets/consolas.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
 
 :root {
   --hud-bg: rgba(10, 16, 24, 0.66);
@@ -9,6 +17,13 @@
   --accent-strong: #17a2d8;
   --danger: #ff6d6d;
   --success: #4ade80;
+  --debug-bg: rgba(0, 0, 0, 0.95);
+  --debug-border: rgba(190, 215, 240, 0.2);
+  --debug-text: #ffffff;
+  --debug-muted: rgba(255, 255, 255, 0.72);
+  --debug-button-hover: rgba(255, 255, 255, 0.1);
+  --debug-active-bg: #ffffff;
+  --debug-active-text: #000000;
 }
 
 * {
@@ -136,17 +151,7 @@ canvas {
   z-index: 20;
 }
 
-#crosshair {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid rgba(231, 248, 255, 0.88);
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 2px rgba(6, 11, 17, 0.45);
-}
+
 
 .hud-block {
   position: absolute;
@@ -196,12 +201,16 @@ canvas {
   transform: translateX(-50%) translateY(14px);
   opacity: 0;
   padding: 10px 16px;
-  border-radius: 999px;
-  color: var(--hud-text);
-  font-size: 0.85rem;
-  background: rgba(8, 13, 20, 0.82);
-  border: 1px solid var(--hud-border);
+  border-radius: 0;
+  color: var(--debug-text);
+  font-size: 0.72rem;
+  background: var(--debug-bg);
+  border: 1px solid var(--debug-border);
+  box-shadow: none;
   transition: opacity 180ms ease, transform 180ms ease;
+  text-transform: uppercase;
+  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  letter-spacing: 0.04em;
 }
 
 .draw-prompt.visible {
@@ -214,11 +223,11 @@ canvas {
   right: 14px;
   bottom: 16px;
   width: min(320px, 92vw);
-  border-radius: 14px;
-  border: 1px solid var(--hud-border);
-  background: var(--hud-bg);
-  backdrop-filter: blur(8px);
-  color: var(--hud-text);
+  border-radius: 0;
+  border: 1px solid var(--debug-border);
+  background: var(--debug-bg);
+  box-shadow: none;
+  color: var(--debug-text);
   padding: 12px;
   pointer-events: auto;
   opacity: 0;
@@ -236,7 +245,8 @@ canvas {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
+  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
 }
 
 .draw-row:last-child {
@@ -245,25 +255,95 @@ canvas {
 
 .draw-row label {
   min-width: 58px;
-  color: var(--hud-muted);
+  color: var(--debug-muted);
 }
 
-#stroke-color {
-  width: 38px;
+.color-preview-row {
+  align-items: center;
+}
+
+.stroke-color-preview {
+  width: 28px;
   height: 28px;
-  border: 0;
-  background: transparent;
-  padding: 0;
+  border: 1px solid var(--debug-border);
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.stroke-color-hex {
+  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  color: var(--debug-text);
+}
+
+.stroke-color-wheel-wrap {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  border: 1px solid var(--debug-border);
+  box-shadow: none;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.stroke-color-wheel {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  cursor: crosshair;
+}
+
+.stroke-color-wheel-cursor {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
 }
 
 #stroke-size {
   flex: 1;
 }
 
+#stroke-value {
+  flex: 1;
+}
+
 #stroke-size-value {
   min-width: 42px;
   text-align: right;
-  color: #d2e9ff;
+  color: var(--debug-text);
+}
+
+#stroke-value-label {
+  min-width: 42px;
+  text-align: right;
+  color: var(--debug-text);
+}
+
+.rgb-row {
+  align-items: center;
+}
+
+.rgb-input {
+  width: 54px;
+  padding: 6px 4px;
+  border-radius: 0;
+  border: 1px solid var(--debug-border);
+  background: var(--debug-bg);
+  color: var(--debug-text);
+  text-align: center;
+  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+}
+
+.undo-button {
+  width: 100%;
 }
 
 .tool-row {
@@ -273,17 +353,78 @@ canvas {
 }
 
 .tool-button {
-  border: 1px solid rgba(183, 214, 255, 0.25);
-  background: rgba(14, 24, 34, 0.88);
-  color: var(--hud-text);
-  border-radius: 10px;
+  border: 1px solid var(--debug-border);
+  background: var(--debug-bg);
+  color: var(--debug-text);
+  border-radius: 0;
   padding: 8px 0;
   font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
   cursor: pointer;
+  box-shadow: none;
+}
+
+.tool-button:hover {
+  background: var(--debug-button-hover);
 }
 
 .tool-button.active {
-  background: linear-gradient(120deg, rgba(66, 180, 255, 0.95), rgba(44, 132, 230, 0.95));
+  border-color: var(--debug-active-bg);
+  background: var(--debug-active-bg);
+  color: var(--debug-active-text);
+  box-shadow: none;
+}
+
+#stroke-size,
+#stroke-value {
+  flex: 1;
+  accent-color: var(--debug-text);
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  background: transparent;
+}
+
+#stroke-size::-webkit-slider-runnable-track,
+#stroke-value::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--debug-border);
+}
+
+#stroke-size::-webkit-slider-thumb,
+#stroke-value::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -5px;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--debug-text);
+  border-radius: 2px;
+  background: #050505;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.9);
+}
+
+#stroke-size::-moz-range-track,
+#stroke-value::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--debug-border);
+}
+
+#stroke-size::-moz-range-thumb,
+#stroke-value::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--debug-text);
+  border-radius: 2px;
+  background: #050505;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.9);
 }
 
 .debug-panel {
@@ -291,12 +432,13 @@ canvas {
   left: 50%;
   top: 12px;
   transform: translateX(-50%);
-  border-radius: 999px;
   padding: 7px 12px;
+  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
   font-size: 0.75rem;
-  color: #d9e9fa;
-  border: 1px solid rgba(190, 215, 240, 0.2);
-  background: rgba(7, 12, 19, 0.66);
+  color: var(--debug-text);
+  border: 1px solid var(--debug-border);
+  background: var(--debug-bg);
+  text-transform: uppercase;
 }
 
 .debug-panel.expanded {

@@ -19295,6 +19295,24 @@
       return this;
     }
   };
+  var LineDashedMaterial = class extends LineBasicMaterial {
+    constructor(parameters) {
+      super();
+      this.isLineDashedMaterial = true;
+      this.type = "LineDashedMaterial";
+      this.scale = 1;
+      this.dashSize = 3;
+      this.gapSize = 1;
+      this.setValues(parameters);
+    }
+    copy(source) {
+      super.copy(source);
+      this.scale = source.scale;
+      this.dashSize = source.dashSize;
+      this.gapSize = source.gapSize;
+      return this;
+    }
+  };
   function convertArray(array, type, forceClone) {
     if (!array || // let 'undefined' and 'null' pass
     !forceClone && array.constructor === type) return array;
@@ -40765,6 +40783,40 @@
       return this;
     }
   };
+  var MeshNormalMaterial = class extends Material2 {
+    constructor(parameters) {
+      super();
+      this.isMeshNormalMaterial = true;
+      this.type = "MeshNormalMaterial";
+      this.bumpMap = null;
+      this.bumpScale = 1;
+      this.normalMap = null;
+      this.normalMapType = TangentSpaceNormalMap2;
+      this.normalScale = new Vector22(1, 1);
+      this.displacementMap = null;
+      this.displacementScale = 1;
+      this.displacementBias = 0;
+      this.wireframe = false;
+      this.wireframeLinewidth = 1;
+      this.flatShading = false;
+      this.setValues(parameters);
+    }
+    copy(source) {
+      super.copy(source);
+      this.bumpMap = source.bumpMap;
+      this.bumpScale = source.bumpScale;
+      this.normalMap = source.normalMap;
+      this.normalMapType = source.normalMapType;
+      this.normalScale.copy(source.normalScale);
+      this.displacementMap = source.displacementMap;
+      this.displacementScale = source.displacementScale;
+      this.displacementBias = source.displacementBias;
+      this.wireframe = source.wireframe;
+      this.wireframeLinewidth = source.wireframeLinewidth;
+      this.flatShading = source.flatShading;
+      return this;
+    }
+  };
   function convertArray2(array, type, forceClone) {
     if (!array || // let 'undefined' and 'null' pass
     !forceClone && array.constructor === type) return array;
@@ -43168,6 +43220,198 @@
     }
   };
 
+  // public/vendor/three/examples/jsm/postprocessing/RenderPixelatedPass.js
+  var RenderPixelatedPass = class extends Pass {
+    constructor(pixelSize, scene, camera, options = {}) {
+      super();
+      this.pixelSize = pixelSize;
+      this.resolution = new Vector22();
+      this.renderResolution = new Vector22();
+      this.pixelatedMaterial = this.createPixelatedMaterial();
+      this.normalMaterial = new MeshNormalMaterial();
+      this.fsQuad = new FullScreenQuad(this.pixelatedMaterial);
+      this.scene = scene;
+      this.camera = camera;
+      this.normalEdgeStrength = options.normalEdgeStrength || 0.3;
+      this.depthEdgeStrength = options.depthEdgeStrength || 0.4;
+      this.beautyRenderTarget = new WebGLRenderTarget2();
+      this.beautyRenderTarget.texture.minFilter = NearestFilter2;
+      this.beautyRenderTarget.texture.magFilter = NearestFilter2;
+      this.beautyRenderTarget.texture.type = HalfFloatType2;
+      this.beautyRenderTarget.depthTexture = new DepthTexture2();
+      this.normalRenderTarget = new WebGLRenderTarget2();
+      this.normalRenderTarget.texture.minFilter = NearestFilter2;
+      this.normalRenderTarget.texture.magFilter = NearestFilter2;
+      this.normalRenderTarget.texture.type = HalfFloatType2;
+    }
+    dispose() {
+      this.beautyRenderTarget.dispose();
+      this.normalRenderTarget.dispose();
+      this.pixelatedMaterial.dispose();
+      this.normalMaterial.dispose();
+      this.fsQuad.dispose();
+    }
+    setSize(width, height) {
+      this.resolution.set(width, height);
+      this.renderResolution.set(width / this.pixelSize | 0, height / this.pixelSize | 0);
+      const { x, y } = this.renderResolution;
+      this.beautyRenderTarget.setSize(x, y);
+      this.normalRenderTarget.setSize(x, y);
+      this.fsQuad.material.uniforms.resolution.value.set(x, y, 1 / x, 1 / y);
+    }
+    setPixelSize(pixelSize) {
+      this.pixelSize = pixelSize;
+      this.setSize(this.resolution.x, this.resolution.y);
+    }
+    render(renderer, writeBuffer) {
+      const uniforms = this.fsQuad.material.uniforms;
+      uniforms.normalEdgeStrength.value = this.normalEdgeStrength;
+      uniforms.depthEdgeStrength.value = this.depthEdgeStrength;
+      renderer.setRenderTarget(this.beautyRenderTarget);
+      renderer.render(this.scene, this.camera);
+      const overrideMaterial_old = this.scene.overrideMaterial;
+      renderer.setRenderTarget(this.normalRenderTarget);
+      this.scene.overrideMaterial = this.normalMaterial;
+      renderer.render(this.scene, this.camera);
+      this.scene.overrideMaterial = overrideMaterial_old;
+      uniforms.tDiffuse.value = this.beautyRenderTarget.texture;
+      uniforms.tDepth.value = this.beautyRenderTarget.depthTexture;
+      uniforms.tNormal.value = this.normalRenderTarget.texture;
+      if (this.renderToScreen) {
+        renderer.setRenderTarget(null);
+      } else {
+        renderer.setRenderTarget(writeBuffer);
+        if (this.clear) renderer.clear();
+      }
+      this.fsQuad.render(renderer);
+    }
+    createPixelatedMaterial() {
+      return new ShaderMaterial2({
+        uniforms: {
+          tDiffuse: { value: null },
+          tDepth: { value: null },
+          tNormal: { value: null },
+          resolution: {
+            value: new Vector42(
+              this.renderResolution.x,
+              this.renderResolution.y,
+              1 / this.renderResolution.x,
+              1 / this.renderResolution.y
+            )
+          },
+          normalEdgeStrength: { value: 0 },
+          depthEdgeStrength: { value: 0 }
+        },
+        vertexShader: (
+          /* glsl */
+          `
+				varying vec2 vUv;
+
+				void main() {
+
+					vUv = uv;
+					gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+				}
+			`
+        ),
+        fragmentShader: (
+          /* glsl */
+          `
+				uniform sampler2D tDiffuse;
+				uniform sampler2D tDepth;
+				uniform sampler2D tNormal;
+				uniform vec4 resolution;
+				uniform float normalEdgeStrength;
+				uniform float depthEdgeStrength;
+				varying vec2 vUv;
+
+				float getDepth(int x, int y) {
+
+					return texture2D( tDepth, vUv + vec2(x, y) * resolution.zw ).r;
+
+				}
+
+				vec3 getNormal(int x, int y) {
+
+					return texture2D( tNormal, vUv + vec2(x, y) * resolution.zw ).rgb * 2.0 - 1.0;
+
+				}
+
+				float depthEdgeIndicator(float depth, vec3 normal) {
+
+					float diff = 0.0;
+					diff += clamp(getDepth(1, 0) - depth, 0.0, 1.0);
+					diff += clamp(getDepth(-1, 0) - depth, 0.0, 1.0);
+					diff += clamp(getDepth(0, 1) - depth, 0.0, 1.0);
+					diff += clamp(getDepth(0, -1) - depth, 0.0, 1.0);
+					return floor(smoothstep(0.01, 0.02, diff) * 2.) / 2.;
+
+				}
+
+				float neighborNormalEdgeIndicator(int x, int y, float depth, vec3 normal) {
+
+					float depthDiff = getDepth(x, y) - depth;
+					vec3 neighborNormal = getNormal(x, y);
+
+					// Edge pixels should yield to faces who's normals are closer to the bias normal.
+					vec3 normalEdgeBias = vec3(1., 1., 1.); // This should probably be a parameter.
+					float normalDiff = dot(normal - neighborNormal, normalEdgeBias);
+					float normalIndicator = clamp(smoothstep(-.01, .01, normalDiff), 0.0, 1.0);
+
+					// Only the shallower pixel should detect the normal edge.
+					float depthIndicator = clamp(sign(depthDiff * .25 + .0025), 0.0, 1.0);
+
+					return (1.0 - dot(normal, neighborNormal)) * depthIndicator * normalIndicator;
+
+				}
+
+				float normalEdgeIndicator(float depth, vec3 normal) {
+
+					float indicator = 0.0;
+
+					indicator += neighborNormalEdgeIndicator(0, -1, depth, normal);
+					indicator += neighborNormalEdgeIndicator(0, 1, depth, normal);
+					indicator += neighborNormalEdgeIndicator(-1, 0, depth, normal);
+					indicator += neighborNormalEdgeIndicator(1, 0, depth, normal);
+
+					return step(0.1, indicator);
+
+				}
+
+				void main() {
+
+					vec4 texel = texture2D( tDiffuse, vUv );
+
+					float depth = 0.0;
+					vec3 normal = vec3(0.0);
+
+					if (depthEdgeStrength > 0.0 || normalEdgeStrength > 0.0) {
+
+						depth = getDepth(0, 0);
+						normal = getNormal(0, 0);
+
+					}
+
+					float dei = 0.0;
+					if (depthEdgeStrength > 0.0)
+						dei = depthEdgeIndicator(depth, normal);
+
+					float nei = 0.0;
+					if (normalEdgeStrength > 0.0)
+						nei = normalEdgeIndicator(depth, normal);
+
+					float Strength = dei > 0.0 ? (1.0 - depthEdgeStrength * dei) : (1.0 + normalEdgeStrength * nei);
+
+					gl_FragColor = texel * Strength;
+
+				}
+			`
+        )
+      });
+    }
+  };
+
   // public/vendor/three/examples/jsm/shaders/FXAAShader.js
   var FXAAShader = {
     name: "FXAAShader",
@@ -43755,14 +43999,51 @@
   UnrealBloomPass.BlurDirectionY = new Vector22(0, 1);
 
   // public/core/Renderer.js
+  var StylizePosterizeShader = {
+    uniforms: {
+      tDiffuse: { value: null },
+      levels: { value: 20 },
+      amount: { value: 0.36 }
+    },
+    vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+    fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float levels;
+    uniform float amount;
+    varying vec2 vUv;
+
+    void main() {
+      vec4 source = texture2D(tDiffuse, vUv);
+      float safeLevels = max(2.0, levels);
+      vec3 poster = floor(source.rgb * (safeLevels - 1.0) + 0.5) / (safeLevels - 1.0);
+      vec3 color = mix(source.rgb, poster, clamp(amount, 0.0, 1.0));
+      gl_FragColor = vec4(color, source.a);
+    }
+  `
+  };
+  var STYLIZE_PRESETS = {
+    off: { enabled: false, levels: 24, amount: 0 },
+    soft: { enabled: true, levels: 20, amount: 0.36 },
+    medium: { enabled: true, levels: 14, amount: 0.5 }
+  };
   var RendererSystem = class {
     constructor(options = {}) {
       this.options = {
-        maxPixelRatio: 1.5,
+        maxPixelRatio: 2,
         enableBloom: true,
         bloomStrength: 0.12,
         bloomRadius: 0.18,
         bloomThreshold: 0.92,
+        enablePixelation: true,
+        pixelationStrength: 0.4,
+        pixelationCellSize: 0.7,
+        stylizePreset: "soft",
         ...options
       };
       this.renderer = new WebGLRenderer({
@@ -43781,8 +44062,11 @@
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       this.composer = new EffectComposer(this.renderer);
       this.renderPass = null;
+      this.pixelationPass = null;
       this.fxaaPass = new ShaderPass(FXAAShader);
       this.composer.addPass(this.fxaaPass);
+      this.stylizePass = new ShaderPass(StylizePosterizeShader);
+      this.composer.addPass(this.stylizePass);
       this.bloomPass = null;
       if (this.options.enableBloom) {
         this.bloomPass = new UnrealBloomPass(
@@ -43795,6 +44079,7 @@
       }
       this.resizeCallbacks = [];
       this._updateFxaaResolution();
+      this.setStylizePreset(this.options.stylizePreset);
     }
     getDomElement() {
       return this.renderer.domElement;
@@ -43806,8 +44091,19 @@
       if (this.renderPass) {
         this.composer.removePass(this.renderPass);
       }
+      if (this.pixelationPass) {
+        this.composer.removePass(this.pixelationPass);
+      }
       this.renderPass = new RenderPass(scene, camera);
       this.composer.insertPass(this.renderPass, 0);
+      this.pixelationPass = new RenderPixelatedPass(this._pixelSizeFromStrength(this.options.pixelationStrength), scene, camera, {
+        normalEdgeStrength: 0,
+        depthEdgeStrength: 0
+      });
+      this.pixelationPass.enabled = this.options.enablePixelation === true;
+      this.composer.addPass(this.pixelationPass);
+      this.setPixelationStrength(this.options.pixelationStrength);
+      this.setPixelationCellSize(this.options.pixelationCellSize);
     }
     onResize(callback) {
       this.resizeCallbacks.push(callback);
@@ -43828,12 +44124,62 @@
     render(deltaSeconds) {
       this.composer.render(deltaSeconds);
     }
+    setPixelationEnabled(enabled) {
+      this.options.enablePixelation = enabled === true;
+      if (this.pixelationPass) {
+        this.pixelationPass.enabled = this.options.enablePixelation;
+      }
+    }
+    setPixelationStrength(amount) {
+      const safeAmount = Number.isFinite(amount) ? MathUtils.clamp(amount, 0, 1) : 0.2;
+      this.options.pixelationStrength = safeAmount;
+      if (this.pixelationPass) {
+        const combinedPixelSize = MathUtils.clamp(
+          this._pixelSizeFromStrength(safeAmount) * this.options.pixelationCellSize,
+          1,
+          16
+        );
+        this.pixelationPass.setPixelSize(combinedPixelSize);
+        console.info(
+          "[PostFX] pixelation updated strength=%s cellSize=%s pixelSize=%s",
+          safeAmount.toFixed(2),
+          this.options.pixelationCellSize.toFixed(2),
+          combinedPixelSize.toFixed(2)
+        );
+      }
+    }
+    setPixelationCellSize(cellSize) {
+      const safeCellSize = Number.isFinite(cellSize) ? MathUtils.clamp(cellSize, 0.5, 6) : 1;
+      this.options.pixelationCellSize = safeCellSize;
+      if (this.pixelationPass) {
+        this.pixelationPass.normalEdgeStrength = 0;
+        this.pixelationPass.depthEdgeStrength = 0;
+        this.setPixelationStrength(this.options.pixelationStrength);
+      }
+    }
+    setStylizePreset(presetName) {
+      const nextPreset = STYLIZE_PRESETS[presetName] || STYLIZE_PRESETS.soft;
+      this.stylizePass.enabled = nextPreset.enabled;
+      this.stylizePass.uniforms.levels.value = nextPreset.levels;
+      this.stylizePass.uniforms.amount.value = nextPreset.amount;
+      this.stylizePreset = presetName in STYLIZE_PRESETS ? presetName : "soft";
+    }
+    cycleStylizePreset() {
+      const order = ["off", "soft", "medium"];
+      const currentIndex = Math.max(0, order.indexOf(this.stylizePreset || "soft"));
+      const nextPreset = order[(currentIndex + 1) % order.length];
+      this.setStylizePreset(nextPreset);
+      return nextPreset;
+    }
     getInfo() {
       return this.renderer.info;
     }
     _updateFxaaResolution(width = window.innerWidth, height = window.innerHeight) {
       this.fxaaPass.material.uniforms.resolution.value.x = 1 / (width * this.pixelRatio);
       this.fxaaPass.material.uniforms.resolution.value.y = 1 / (height * this.pixelRatio);
+    }
+    _pixelSizeFromStrength(strength = 0.2) {
+      return MathUtils.clamp(2 + Math.round(MathUtils.clamp(strength, 0, 1) * 6), 2, 8);
     }
   };
 
@@ -46866,7 +47212,8 @@
       this.cityRoot = city;
       this.scene.add(city);
       const octreeStart = performance.now();
-      this.worldOctree.fromGraphNode(city);
+      const collisionProxy = this._buildCityCollisionProxy(meshNodes, city);
+      this.worldOctree.fromGraphNode(collisionProxy);
       if (this.perfDebug) {
         const now3 = performance.now();
         console.info(
@@ -46925,6 +47272,35 @@
       this.cityRoot = fallbackGroup;
       this.scene.add(fallbackGroup);
       this.worldOctree.fromGraphNode(fallbackGroup);
+    }
+    _buildCityCollisionProxy(meshNodes, cityRoot) {
+      const proxyGroup = new Group();
+      proxyGroup.name = "CityCollisionProxy";
+      const unitBoxGeometry = new BoxGeometry(1, 1, 1);
+      const proxyMaterial = new MeshBasicMaterial({ visible: false });
+      const tempBox = new Box3();
+      const tempCenter = new Vector3();
+      const tempSize = new Vector3();
+      cityRoot.updateWorldMatrix(true, true);
+      for (const node of meshNodes) {
+        node.updateWorldMatrix(true, false);
+        if (!node.geometry.boundingBox) {
+          node.geometry.computeBoundingBox();
+        }
+        tempBox.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+        tempBox.getCenter(tempCenter);
+        tempBox.getSize(tempSize);
+        if (tempSize.x < 0.05 || tempSize.y < 0.05 || tempSize.z < 0.05) {
+          continue;
+        }
+        const boxMesh = new Mesh(unitBoxGeometry, proxyMaterial);
+        boxMesh.position.copy(tempCenter);
+        boxMesh.scale.copy(tempSize);
+        boxMesh.updateMatrix();
+        proxyGroup.add(boxMesh);
+      }
+      proxyGroup.updateMatrixWorld(true);
+      return proxyGroup;
     }
     _setupLights() {
       this.ambientLight = new AmbientLight(9746943, 0.08);
@@ -47000,9 +47376,6 @@
     out.lerp(target, t);
     return out;
   }
-  function roundToStep(value, step) {
-    return Math.round(value / step) * step;
-  }
 
   // public/core/CameraController.js
   function normalizeAngle(value) {
@@ -47025,7 +47398,7 @@
       this.followTarget = new Vector3();
       this.desiredPosition = new Vector3();
       this.tempOffset = new Vector3();
-      this.chaseDistance = 6.4;
+      this.chaseDistance = 12.5;
       this.minChaseDistance = 2.4;
       this.maxChaseDistance = 12.5;
       this.zoomSensitivity = 0.01;
@@ -47205,7 +47578,7 @@
   };
 
   // public/game/PlayerController.js
-  var PLAYABLE_STATES = ["idle", "walk", "run", "jump"];
+  var PLAYABLE_STATES = ["idle", "walk", "run"];
   var QUARTER_TURN = Math.PI * 0.5;
   var PLAYER_MODEL_CANDIDATES = [
     "models/idkbro.glb",
@@ -47220,6 +47593,10 @@
     while (angle > Math.PI) angle -= Math.PI * 2;
     while (angle < -Math.PI) angle += Math.PI * 2;
     return angle;
+  }
+  function dampAngle2(current, target, lambda, dt) {
+    const delta = normalizeAngle2(target - current);
+    return normalizeAngle2(current + delta * (1 - Math.exp(-lambda * dt)));
   }
   function angleDistance(a, b) {
     return Math.abs(normalizeAngle2(a - b));
@@ -47332,6 +47709,10 @@
       this.previousOnGround = null;
       this.stableGroundFrames = 0;
       this.hasStableGroundContact = false;
+      this.jumpFrameTakeoff = 10;
+      this.jumpFrameApex = 20;
+      this.jumpFrameLand = 30;
+      this.jumpFrameRecover = 45;
       this.debugAnimations = isAnimationDebugEnabled();
       this.tempQuat = new Quaternion();
       this.tempForward = new Vector3();
@@ -47661,9 +48042,6 @@
       if (input.justJumped) {
         this.jumpLockActive = true;
         this.groundedFrameStreak = 0;
-      } else if (this.hasStableGroundContact && this.previousOnGround === true && input.onGround === false) {
-        this.jumpLockActive = true;
-        this.groundedFrameStreak = 0;
       }
       if (this.jumpLockActive) {
         if (input.onGround) {
@@ -47719,22 +48097,12 @@
         return;
       }
       this.targetRotation = Math.atan2(input.vx, input.vz) + this.modelFacingOffset;
-      this.localPlayer.rotation.y = damp3(this.localPlayer.rotation.y, this.targetRotation, 14, deltaSeconds);
+      this.localPlayer.rotation.y = dampAngle2(this.localPlayer.rotation.y, this.targetRotation, 14, deltaSeconds);
     }
     _resolveAnimationState(input) {
-      if (this.currentState === "jump" && this.currentAction && this.currentAction.isRunning() === false && input.onGround) {
+      if (this.currentState === "jump") {
         this.jumpLockActive = false;
         this.groundedFrameStreak = 0;
-        if (input.sprintingForward) {
-          return "run";
-        }
-        if (input.moving) {
-          return "walk";
-        }
-        return "idle";
-      }
-      if (input.justJumped || this.jumpLockActive) {
-        return "jump";
       }
       if (input.sprintingForward) {
         return "run";
@@ -47784,6 +48152,42 @@
     }
     _syncLocomotionTimescale(input) {
       if (!this.currentAction) {
+        return;
+      }
+      if (this.currentState === "jump") {
+        const jumpClip = this.currentAction.getClip?.();
+        const jumpDuration = Number.isFinite(jumpClip?.duration) ? jumpClip.duration : 0;
+        if (jumpDuration > 1e-3) {
+          const takeoffTime = jumpDuration * (this.jumpFrameTakeoff / 45);
+          const apexTime = jumpDuration * (this.jumpFrameApex / 45);
+          const landTime = jumpDuration * (this.jumpFrameLand / 45);
+          const recoverTime = jumpDuration * (this.jumpFrameRecover / 45);
+          if (!input.onGround) {
+            if (this.currentAction.time < takeoffTime) {
+              this.currentAction.setEffectiveTimeScale(1.9);
+              return;
+            }
+            if (this.currentAction.time < apexTime && input.verticalVelocity >= 0) {
+              this.currentAction.setEffectiveTimeScale(1.2);
+              return;
+            }
+            if (this.currentAction.time < landTime) {
+              this.currentAction.setEffectiveTimeScale(0.95);
+              return;
+            }
+            this.currentAction.setEffectiveTimeScale(0.9);
+            return;
+          }
+          if (this.currentAction.time < landTime) {
+            this.currentAction.setEffectiveTimeScale(1.6);
+            return;
+          }
+          if (this.currentAction.time < recoverTime) {
+            this.currentAction.setEffectiveTimeScale(1.05);
+            return;
+          }
+        }
+        this.currentAction.setEffectiveTimeScale(1);
         return;
       }
       if (this.currentState === "walk") {
@@ -47881,8 +48285,7 @@
         back: false,
         left: false,
         right: false,
-        run: false,
-        jumpQueued: false
+        run: false
       };
       this.horizontalVelocity = new Vector3();
       this.verticalVelocity = 0;
@@ -47891,7 +48294,6 @@
       this.acceleration = 16;
       this.deceleration = 12;
       this.gravity = 24;
-      this.jumpSpeed = 8.2;
       this.playerCollider = new Capsule(
         new Vector3(0, 0.35, 0),
         new Vector3(0, 1.65, 0),
@@ -47905,10 +48307,7 @@
       this.onGround = false;
       this.airborneTime = 0;
       this.jumpGraceSeconds = 0.12;
-      this.jumpBufferSeconds = 0.14;
-      this.jumpBufferTimer = 0;
-      this.coyoteTimeSeconds = 0.12;
-      this.coyoteTimer = 0;
+      this.groundContactRiseTolerance = 0.25;
       this.idleCollisionSkipCounter = 0;
       this.idleCollisionSkipEvery = 2;
       this._bindInput();
@@ -47919,8 +48318,6 @@
         this.resetInputs();
         this.horizontalVelocity.set(0, 0, 0);
         this.verticalVelocity = 0;
-        this.jumpBufferTimer = 0;
-        this.coyoteTimer = 0;
         this.airborneTime = 0;
       }
     }
@@ -47930,8 +48327,13 @@
       this.input.left = false;
       this.input.right = false;
       this.input.run = false;
-      this.input.jumpQueued = false;
-      this.jumpBufferTimer = 0;
+    }
+    _haltHorizontalMotion() {
+      this.resetInputs();
+      this.horizontalVelocity.x = 0;
+      this.horizontalVelocity.z = 0;
+      this.tempTargetVelocity.x = 0;
+      this.tempTargetVelocity.z = 0;
     }
     syncColliderFromPlayer(playerObject) {
       const position = playerObject.position;
@@ -47944,14 +48346,6 @@
       }
       const dt = clamp3(deltaSeconds, 0, 0.05);
       this.syncColliderFromPlayer(playerObject);
-      if (this.jumpBufferTimer > 0) {
-        this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
-      }
-      if (this.onGround) {
-        this.coyoteTimer = this.coyoteTimeSeconds;
-      } else {
-        this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
-      }
       if (!this.enabled) {
         return this._applyPassivePhysics(playerObject, dt);
       }
@@ -47970,18 +48364,7 @@
       const accel = this.tempDirection.lengthSq() > 0 ? this.acceleration : this.deceleration;
       this.horizontalVelocity.x = damp3(this.horizontalVelocity.x, this.tempTargetVelocity.x, accel, dt);
       this.horizontalVelocity.z = damp3(this.horizontalVelocity.z, this.tempTargetVelocity.z, accel, dt);
-      let justJumped = false;
-      if (this.input.jumpQueued) {
-        this.jumpBufferTimer = this.jumpBufferSeconds;
-      }
-      if (this.jumpBufferTimer > 0 && (this.onGround || this.coyoteTimer > 0)) {
-        this.verticalVelocity = this.jumpSpeed;
-        this.onGround = false;
-        this.coyoteTimer = 0;
-        this.jumpBufferTimer = 0;
-        justJumped = true;
-      }
-      this.input.jumpQueued = false;
+      const justJumped = false;
       if (!this.onGround) {
         this.verticalVelocity -= this.gravity * dt;
       }
@@ -48002,9 +48385,11 @@
         this.onGround = shouldSkipCollision ? this.onGround : false;
         if (collisionResult) {
           this.playerCollider.translate(collisionResult.normal.multiplyScalar(collisionResult.depth));
-          if (collisionResult.normal.y > 0.25) {
+          if (collisionResult.normal.y > 0.25 && this.verticalVelocity <= this.groundContactRiseTolerance) {
             this.onGround = true;
             this.verticalVelocity = Math.max(this.verticalVelocity, 0);
+          } else if (collisionResult.normal.y < -0.25 && this.verticalVelocity > 0) {
+            this.verticalVelocity = 0;
           }
         }
       }
@@ -48047,8 +48432,10 @@
           const collisionResult = this.worldOctree.capsuleIntersect(this.playerCollider);
           if (collisionResult) {
             this.playerCollider.translate(collisionResult.normal.multiplyScalar(collisionResult.depth));
-            if (collisionResult.normal.y > 0.25) {
+            if (collisionResult.normal.y > 0.25 && this.verticalVelocity <= this.groundContactRiseTolerance) {
               this.onGround = true;
+              this.verticalVelocity = 0;
+            } else if (collisionResult.normal.y < -0.25 && this.verticalVelocity > 0) {
               this.verticalVelocity = 0;
             }
           }
@@ -48102,10 +48489,7 @@
             this.input.run = true;
             break;
           case "Space":
-            if (!event.repeat) {
-              this.input.jumpQueued = true;
-              this.jumpBufferTimer = this.jumpBufferSeconds;
-            }
+            event.preventDefault();
             break;
           default:
             break;
@@ -48134,12 +48518,15 @@
         }
       });
       window.addEventListener("blur", () => {
-        this.resetInputs();
+        this._haltHorizontalMotion();
       });
       document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
-          this.resetInputs();
+          this._haltHorizontalMotion();
         }
+      });
+      window.addEventListener("pagehide", () => {
+        this._haltHorizontalMotion();
       });
     }
   };
@@ -49105,11 +49492,19 @@
       this.tempWorldPoint = new Vector3();
       this.tempVec = new Vector3();
       this.tempBasisMatrix = new Matrix4();
+      this.probeRaycaster = new Raycaster();
+      this.tempProbeOrigin = new Vector3();
+      this.tempProbeDirection = new Vector3();
+      this.tempProbeNormal = new Vector3();
       this.worldUp = new Vector3(0, 1, 0);
       this.altUp = new Vector3(1, 0, 0);
       this.patchSize = 4;
       this.patchHalfSize = this.patchSize * 0.5;
-      this.surfaceOffset = 0.02;
+      this.minDrawablePatchHalfWidth = 0.55;
+      this.minDrawablePatchHalfHeight = 0.55;
+      this.minDrawablePatchArea = 1.2;
+      this.maxDrawableNormalY = 0.45;
+      this.surfaceOffset = 0.06;
       this.drawPromptMaxDistance = 11.5;
       this.quantization = 1e3;
       this.maxPointsPerStroke = 280;
@@ -49117,6 +49512,9 @@
       this.simplificationEpsilon = 0.02;
       this.maxLiveStrokesPerPatch = 48;
       this.bakeBatchSize = 5;
+      this.bakedTextureSize = 2048;
+      this.textureBrushScale = 0.015;
+      this.activePreviewStrokeVisible = false;
       this.drawMode = false;
       this.pointerDown = false;
       this.activePointerId = null;
@@ -49140,14 +49538,19 @@
       this.cameraAngleThreshold = 0.01;
       this.lastPointerMoveProcessMs = 0;
       this.pointerMoveMinIntervalMs = 8;
+      this.drawBoundaryDashOffset = 0;
+      this.drawBoundaryDashSpeed = 1.3;
       this.activeStrokePositionsBuffer = null;
       this.patches = /* @__PURE__ */ new Map();
       this.strokeIndex = /* @__PURE__ */ new Map();
       this.seenStrokeIds = /* @__PURE__ */ new Set();
       this.lineMaterials = /* @__PURE__ */ new Set();
+      this.undoStack = [];
+      this.redoStack = [];
       this.sendStrokeCallback = () => {
       };
       this.strokeCounter = 0;
+      this.strokeRenderOrderCounter = 20;
       this.hasPointer = false;
       this.previewMesh = this._createPreviewMesh();
       this.scene.add(this.previewMesh);
@@ -49177,7 +49580,100 @@
     isDrawModeActive() {
       return this.drawMode;
     }
+    _doAction(action) {
+      this._applyAction(action);
+      this.undoStack.push(action);
+      this.redoStack.length = 0;
+    }
+    undo() {
+      const targetPatchKey = this.activePatch?.key;
+      if (!targetPatchKey) return false;
+      for (let i = this.undoStack.length - 1; i >= 0; i -= 1) {
+        const action = this.undoStack[i];
+        if (action.patchKey !== targetPatchKey) {
+          continue;
+        }
+        this.undoStack.splice(i, 1);
+        this._reverseAction(action);
+        this.redoStack.push(action);
+        return true;
+      }
+      return false;
+    }
+    redo() {
+      const targetPatchKey = this.activePatch?.key;
+      if (!targetPatchKey) return false;
+      for (let i = this.redoStack.length - 1; i >= 0; i -= 1) {
+        const action = this.redoStack[i];
+        if (action.patchKey !== targetPatchKey) {
+          continue;
+        }
+        this.redoStack.splice(i, 1);
+        this._applyAction(action);
+        this.undoStack.push(action);
+        return true;
+      }
+      return false;
+    }
+    _applyAction(action) {
+      switch (action.type) {
+        case "add-stroke": {
+          const patch = this.patches.get(action.patchKey);
+          if (!patch) return;
+          patch.strokeArchive.set(action.stroke.id, action.stroke);
+          this.strokeIndex.set(action.stroke.id, { patchKey: patch.key, stroke: action.stroke });
+          this._ensureBakedLayer(patch);
+          this._rebuildBakedLayer(patch);
+          break;
+        }
+        case "erase": {
+          const patch = this.patches.get(action.patchKey);
+          if (!patch) return;
+          for (const snapshot of action.strokes) {
+            this._removeStrokeFromPatch(patch, snapshot.id);
+          }
+          break;
+        }
+      }
+    }
+    _reverseAction(action) {
+      switch (action.type) {
+        case "add-stroke": {
+          const patch = this.patches.get(action.patchKey);
+          if (!patch) return;
+          this._removeStrokeFromPatch(patch, action.stroke.id);
+          break;
+        }
+        case "erase": {
+          for (const snapshot of action.strokes) {
+            const patch = this._getOrCreatePatchFromPacket(snapshot.patchKey, snapshot.patch);
+            const restored = {
+              id: snapshot.id,
+              color: snapshot.color,
+              thickness: snapshot.thickness,
+              points: snapshot.points,
+              createdAt: snapshot.createdAt,
+              renderOrder: snapshot.renderOrder || this._nextStrokeRenderOrder()
+            };
+            if (!patch.strokeArchive.has(restored.id)) {
+              patch.strokeArchive.set(restored.id, restored);
+              this.strokeIndex.set(restored.id, { patchKey: patch.key, stroke: restored });
+              this._ensureBakedLayer(patch);
+              this._rebuildBakedLayer(patch);
+            }
+          }
+          break;
+        }
+      }
+    }
     update(deltaSeconds) {
+      if (this.drawBoundaryMesh.visible) {
+        this.drawBoundaryDashOffset += deltaSeconds * this.drawBoundaryDashSpeed;
+        const dashShader = this.drawBoundaryMesh.material?.userData?.dashShader;
+        if (dashShader?.uniforms?.dashOffset) {
+          dashShader.uniforms.dashOffset.value = this.drawBoundaryDashOffset;
+        }
+      }
       if (this.drawMode) {
         this.uiManager.setDrawPrompt(true, "Drawing mode - hold mouse to paint, Esc to exit");
         return;
@@ -49190,7 +49686,7 @@
         return;
       }
       this.wallScanAccumulator = 0;
-      const hit = this._findWallInFront() || this._findWallAtPointer();
+      const hit = this._findWallAtPointer() || this._findWallInFront();
       this._markScanState();
       if (!hit) {
         this.currentCandidate = null;
@@ -49202,6 +49698,13 @@
         return;
       }
       const descriptor = this._buildPatchDescriptor(hit);
+      if (!this._isDrawablePatchDescriptor(descriptor)) {
+        this.currentCandidate = null;
+        this.previewMesh.visible = false;
+        this.drawBoundaryMesh.visible = false;
+        this.uiManager.setDrawPrompt(false);
+        return;
+      }
       this.currentCandidate = descriptor;
       this._updatePreviewMesh(descriptor);
       this._updateDrawBoundaryMesh(descriptor);
@@ -49235,7 +49738,8 @@
         thickness: clamp3(Number(packet.thickness) || 6, 1, 24),
         points,
         createdAt: packet.createdAt || Date.now(),
-        playerId: packet.playerId || null
+        playerId: packet.playerId || null,
+        renderOrder: this._nextStrokeRenderOrder()
       };
       this._insertStroke(patch, stroke, false);
       this.seenStrokeIds.add(stroke.id);
@@ -49248,6 +49752,20 @@
         }
         if (event.key === "Escape" && this.drawMode) {
           this._exitDrawMode();
+        }
+      });
+      window.addEventListener("keydown", (e) => {
+        if (e.defaultPrevented) {
+          return;
+        }
+        if (e.ctrlKey && e.key.toLowerCase() === "z") {
+          e.preventDefault();
+          e.shiftKey ? this.redo() : this.undo();
+          return;
+        }
+        if (e.ctrlKey && e.key.toLowerCase() === "y") {
+          e.preventDefault();
+          this.redo();
         }
       });
       const domElement = this.rendererSystem.getDomElement();
@@ -49333,7 +49851,8 @@
           color: this.uiManager.getBrushColor(),
           thickness: clamp3(this.uiManager.getBrushSize(), 1, 24),
           points: bounded,
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          renderOrder: this._nextStrokeRenderOrder()
         };
         this._clearActiveStrokeRenderable();
         this._insertStroke(this.activePatch, stroke, true);
@@ -49462,6 +49981,23 @@
       }
       return worldPoint.distanceTo(this.camera.position) <= this.drawPromptMaxDistance;
     }
+    _isDrawablePatchDescriptor(descriptor) {
+      if (!descriptor) {
+        return false;
+      }
+      const width = Number.isFinite(descriptor.maxX) && Number.isFinite(descriptor.minX) ? Math.max(0, descriptor.maxX - descriptor.minX) : Math.max(0, (descriptor.halfWidth || descriptor.halfSize || 0) * 2);
+      const height = Number.isFinite(descriptor.maxY) && Number.isFinite(descriptor.minY) ? Math.max(0, descriptor.maxY - descriptor.minY) : Math.max(0, (descriptor.halfHeight || descriptor.halfSize || 0) * 2);
+      if (width < this.minDrawablePatchHalfWidth * 2 || height < this.minDrawablePatchHalfHeight * 2) {
+        return false;
+      }
+      if (width * height < this.minDrawablePatchArea) {
+        return false;
+      }
+      if (Math.abs(descriptor.normal?.y || 0) > this.maxDrawableNormalY) {
+        return false;
+      }
+      return true;
+    }
     _buildPatchDescriptor(hit) {
       this.tempNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld).normalize();
       const up = Math.abs(this.tempNormal.y) > 0.9 ? this.altUp : this.worldUp;
@@ -49473,10 +50009,55 @@
       const planeDistance = this.tempNormal.dot(hit.point);
       const rawU = this.tempTangent.dot(hit.point);
       const rawV = this.tempBitangent.dot(hit.point);
-      const snappedU = roundToStep(rawU, this.patchSize);
-      const snappedV = roundToStep(rawV, this.patchSize);
-      this.tempCenter.copy(this.tempTangent).multiplyScalar(snappedU).addScaledVector(this.tempBitangent, snappedV).addScaledVector(this.tempNormal, planeDistance);
-      const key = `${hit.object.id}:${Math.round(snappedU * 10)}:${Math.round(snappedV * 10)}`;
+      const projectionRange = this._computeMeshProjectionRange(hit.object, this.tempTangent, this.tempBitangent);
+      const spanU = Math.max(0.01, projectionRange.maxU - projectionRange.minU);
+      const spanV = Math.max(0.01, projectionRange.maxV - projectionRange.minV);
+      const cellsU = Math.max(1, Math.ceil(spanU / this.patchSize));
+      const cellsV = Math.max(1, Math.ceil(spanV / this.patchSize));
+      const cellU = clamp3(Math.floor((rawU - projectionRange.minU) / this.patchSize), 0, cellsU - 1);
+      const cellV = clamp3(Math.floor((rawV - projectionRange.minV) / this.patchSize), 0, cellsV - 1);
+      const cellStartU = projectionRange.minU + cellU * this.patchSize;
+      const cellEndU = Math.min(projectionRange.maxU, cellStartU + this.patchSize);
+      const cellStartV = projectionRange.minV + cellV * this.patchSize;
+      const cellEndV = Math.min(projectionRange.maxV, cellStartV + this.patchSize);
+      const centerU = (cellStartU + cellEndU) * 0.5;
+      const centerV = (cellStartV + cellEndV) * 0.5;
+      this.tempCenter.copy(this.tempTangent).multiplyScalar(centerU).addScaledVector(this.tempBitangent, centerV).addScaledVector(this.tempNormal, planeDistance);
+      const probeOffset = Math.max(this.surfaceOffset * 2.2, 0.05);
+      if (!this._isPointOnMeshSurface(hit.object, this.tempCenter, probeOffset)) {
+        return null;
+      }
+      const key = `${hit.object.id}:${cellU}:${cellV}`;
+      const cached = this.patches.get(key);
+      if (cached) {
+        return {
+          key,
+          meshId: cached.meshId,
+          center: cached.center.clone(),
+          normal: cached.normal.clone(),
+          tangent: cached.tangent.clone(),
+          bitangent: cached.bitangent.clone(),
+          minX: Number.isFinite(cached.minX) ? cached.minX : -(cached.halfWidth || cached.halfSize || this.patchHalfSize),
+          maxX: Number.isFinite(cached.maxX) ? cached.maxX : cached.halfWidth || cached.halfSize || this.patchHalfSize,
+          minY: Number.isFinite(cached.minY) ? cached.minY : -(cached.halfHeight || cached.halfSize || this.patchHalfSize),
+          maxY: Number.isFinite(cached.maxY) ? cached.maxY : cached.halfHeight || cached.halfSize || this.patchHalfSize,
+          halfWidth: cached.halfWidth || cached.halfSize || this.patchHalfSize,
+          halfHeight: cached.halfHeight || cached.halfSize || this.patchHalfSize,
+          halfSize: cached.halfSize || this.patchHalfSize
+        };
+      }
+      const cellMinX = cellStartU - centerU;
+      const cellMaxX = cellEndU - centerU;
+      const cellMinY = cellStartV - centerV;
+      const cellMaxY = cellEndV - centerV;
+      const surfaceBounds = this._computePatchSurfaceBounds(hit, this.tempCenter);
+      const adjustedMinX = Math.max(surfaceBounds.minX, cellMinX);
+      const adjustedMaxX = Math.min(surfaceBounds.maxX, cellMaxX);
+      const adjustedMinY = Math.max(surfaceBounds.minY, cellMinY);
+      const adjustedMaxY = Math.min(surfaceBounds.maxY, cellMaxY);
+      if (adjustedMaxX <= adjustedMinX || adjustedMaxY <= adjustedMinY) {
+        return null;
+      }
       return {
         key,
         meshId: hit.object.id,
@@ -49484,8 +50065,132 @@
         normal: this.tempNormal.clone(),
         tangent: this.tempTangent.clone(),
         bitangent: this.tempBitangent.clone(),
-        halfSize: this.patchHalfSize
+        minX: adjustedMinX,
+        maxX: adjustedMaxX,
+        minY: adjustedMinY,
+        maxY: adjustedMaxY,
+        halfWidth: (adjustedMaxX - adjustedMinX) * 0.5,
+        halfHeight: (adjustedMaxY - adjustedMinY) * 0.5,
+        halfSize: Math.max((adjustedMaxX - adjustedMinX) * 0.5, (adjustedMaxY - adjustedMinY) * 0.5)
       };
+    }
+    _computeMeshProjectionRange(mesh, tangent, bitangent) {
+      if (!mesh?.geometry) {
+        return {
+          minU: -this.patchHalfSize,
+          maxU: this.patchHalfSize,
+          minV: -this.patchHalfSize,
+          maxV: this.patchHalfSize
+        };
+      }
+      const geometry = mesh.geometry;
+      if (!geometry.boundingBox) {
+        geometry.computeBoundingBox();
+      }
+      const bounds = geometry.boundingBox;
+      if (!bounds) {
+        return {
+          minU: -this.patchHalfSize,
+          maxU: this.patchHalfSize,
+          minV: -this.patchHalfSize,
+          maxV: this.patchHalfSize
+        };
+      }
+      mesh.updateWorldMatrix(true, false);
+      const min = bounds.min;
+      const max = bounds.max;
+      const corners = [
+        [min.x, min.y, min.z],
+        [min.x, min.y, max.z],
+        [min.x, max.y, min.z],
+        [min.x, max.y, max.z],
+        [max.x, min.y, min.z],
+        [max.x, min.y, max.z],
+        [max.x, max.y, min.z],
+        [max.x, max.y, max.z]
+      ];
+      let minU = Infinity;
+      let maxU = -Infinity;
+      let minV = Infinity;
+      let maxV = -Infinity;
+      for (const [x, y, z] of corners) {
+        this.tempWorldPoint.set(x, y, z).applyMatrix4(mesh.matrixWorld);
+        const u = this.tempWorldPoint.dot(tangent);
+        const v = this.tempWorldPoint.dot(bitangent);
+        if (u < minU) minU = u;
+        if (u > maxU) maxU = u;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+      return {
+        minU,
+        maxU,
+        minV,
+        maxV
+      };
+    }
+    _computePatchSurfaceBounds(hit, center) {
+      const mesh = hit?.object;
+      if (!mesh) {
+        return {
+          minX: -this.patchHalfSize,
+          maxX: this.patchHalfSize,
+          minY: -this.patchHalfSize,
+          maxY: this.patchHalfSize
+        };
+      }
+      const boundsX = this._measureAxisBounds(mesh, center, this.tempTangent);
+      const boundsY = this._measureAxisBounds(mesh, center, this.tempBitangent);
+      return {
+        minX: boundsX.min,
+        maxX: boundsX.max,
+        minY: boundsY.min,
+        maxY: boundsY.max
+      };
+    }
+    _measureAxisBounds(mesh, center, axis) {
+      const maxDistance = this.patchHalfSize;
+      const positive = this._probeExtent(mesh, center, axis, maxDistance);
+      const negative = this._probeExtent(mesh, center, this.tempVec.copy(axis).multiplyScalar(-1), maxDistance);
+      return {
+        min: -Math.max(0.2, Math.min(this.patchHalfSize, negative)),
+        max: Math.max(0.2, Math.min(this.patchHalfSize, positive))
+      };
+    }
+    _probeExtent(mesh, center, direction, maxDistance) {
+      let low = 0;
+      let high = maxDistance;
+      const probeOffset = Math.max(this.surfaceOffset * 2.2, 0.05);
+      for (let i = 0; i < 7; i += 1) {
+        const mid = (low + high) * 0.5;
+        this.tempWorldPoint.copy(center).addScaledVector(direction, mid);
+        if (this._isPointOnMeshSurface(mesh, this.tempWorldPoint, probeOffset)) {
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+      return low;
+    }
+    _isPointOnMeshSurface(mesh, worldPoint, probeOffset) {
+      this.tempProbeOrigin.copy(worldPoint).addScaledVector(this.tempNormal, probeOffset);
+      this.tempProbeDirection.copy(this.tempNormal).multiplyScalar(-1);
+      this.probeRaycaster.set(this.tempProbeOrigin, this.tempProbeDirection);
+      this.probeRaycaster.near = 0;
+      this.probeRaycaster.far = probeOffset * 4;
+      const hits = this.probeRaycaster.intersectObject(mesh, false);
+      if (!hits || hits.length === 0) {
+        return false;
+      }
+      const firstHit = hits[0];
+      if (!firstHit.face) {
+        return false;
+      }
+      if (firstHit.point.distanceTo(worldPoint) > 0.08) {
+        return false;
+      }
+      this.tempProbeNormal.copy(firstHit.face.normal).transformDirection(mesh.matrixWorld).normalize();
+      return Math.abs(this.tempProbeNormal.dot(this.tempNormal)) > 0.7;
     }
     _getOrCreatePatch(descriptor) {
       const existing = this.patches.get(descriptor.key);
@@ -49503,8 +50208,15 @@
         tangent: descriptor.tangent.clone(),
         bitangent: descriptor.bitangent.clone(),
         halfSize: descriptor.halfSize,
+        halfWidth: descriptor.halfWidth || descriptor.halfSize,
+        halfHeight: descriptor.halfHeight || descriptor.halfSize,
+        minX: Number.isFinite(descriptor.minX) ? descriptor.minX : -(descriptor.halfWidth || descriptor.halfSize),
+        maxX: Number.isFinite(descriptor.maxX) ? descriptor.maxX : descriptor.halfWidth || descriptor.halfSize,
+        minY: Number.isFinite(descriptor.minY) ? descriptor.minY : -(descriptor.halfHeight || descriptor.halfSize),
+        maxY: Number.isFinite(descriptor.maxY) ? descriptor.maxY : descriptor.halfHeight || descriptor.halfSize,
         group,
         liveStrokes: [],
+        strokeArchive: /* @__PURE__ */ new Map(),
         bakedLayer: null
       };
       this.patches.set(patch.key, patch);
@@ -49523,7 +50235,13 @@
         normal: new Vector3(packetPatch.normal[0], packetPatch.normal[1], packetPatch.normal[2]).normalize(),
         tangent: new Vector3(packetPatch.tangent[0], packetPatch.tangent[1], packetPatch.tangent[2]).normalize(),
         bitangent: new Vector3(packetPatch.bitangent[0], packetPatch.bitangent[1], packetPatch.bitangent[2]).normalize(),
-        halfSize: Number(packetPatch.halfSize) || this.patchHalfSize
+        halfSize: Number(packetPatch.halfSize) || this.patchHalfSize,
+        halfWidth: Number(packetPatch.halfWidth) || Number(packetPatch.halfSize) || this.patchHalfSize,
+        halfHeight: Number(packetPatch.halfHeight) || Number(packetPatch.halfSize) || this.patchHalfSize,
+        minX: Number.isFinite(Number(packetPatch.minX)) ? Number(packetPatch.minX) : -(Number(packetPatch.halfWidth) || Number(packetPatch.halfSize) || this.patchHalfSize),
+        maxX: Number.isFinite(Number(packetPatch.maxX)) ? Number(packetPatch.maxX) : Number(packetPatch.halfWidth) || Number(packetPatch.halfSize) || this.patchHalfSize,
+        minY: Number.isFinite(Number(packetPatch.minY)) ? Number(packetPatch.minY) : -(Number(packetPatch.halfHeight) || Number(packetPatch.halfSize) || this.patchHalfSize),
+        maxY: Number.isFinite(Number(packetPatch.maxY)) ? Number(packetPatch.maxY) : Number(packetPatch.halfHeight) || Number(packetPatch.halfSize) || this.patchHalfSize
       };
       return this._getOrCreatePatch(descriptor);
     }
@@ -49538,75 +50256,49 @@
         return null;
       }
       this.tempVec.copy(this.tempIntersectPoint).sub(this.activePatch.center);
-      const localX = clamp3(this.tempVec.dot(this.activePatch.tangent), -this.activePatch.halfSize, this.activePatch.halfSize);
-      const localY = clamp3(this.tempVec.dot(this.activePatch.bitangent), -this.activePatch.halfSize, this.activePatch.halfSize);
+      const localX = clamp3(this.tempVec.dot(this.activePatch.tangent), this.activePatch.minX, this.activePatch.maxX);
+      const localY = clamp3(this.tempVec.dot(this.activePatch.bitangent), this.activePatch.minY, this.activePatch.maxY);
       return { x: localX, y: localY };
     }
     _insertStroke(patch, stroke, emitNetwork) {
-      this._attachStrokeRenderable(patch, stroke);
-      patch.liveStrokes.push(stroke);
-      this.strokeIndex.set(stroke.id, { patchKey: patch.key, stroke });
-      this.seenStrokeIds.add(stroke.id);
-      if (patch.liveStrokes.length > this.maxLiveStrokesPerPatch) {
-        this._bakeOldStrokes(patch);
-      }
       if (emitNetwork) {
+        this._doAction({
+          type: "add-stroke",
+          stroke,
+          patchKey: patch.key
+        });
         this.sendStrokeCallback(this._encodeStrokePacket(patch, stroke));
+      } else {
+        this._applyAction({
+          type: "add-stroke",
+          stroke,
+          patchKey: patch.key
+        });
       }
+    }
+    _nextStrokeRenderOrder() {
+      this.strokeRenderOrderCounter += 1;
+      return this.strokeRenderOrderCounter;
     }
     _updateActiveStrokeRenderable() {
       if (!this.activePatch || this.activeStroke.length < 1 || !this.activePreviewPoint) {
         this._clearActiveStrokeRenderable();
         return;
       }
-      const requiredLength = (this.activeStroke.length + 1) * 3;
-      if (!this.activeStrokePositionsBuffer || this.activeStrokePositionsBuffer.length < requiredLength) {
-        this.activeStrokePositionsBuffer = new Float32Array(requiredLength);
+      const previewPoints = this.activeStroke.slice();
+      const lastPoint = previewPoints[previewPoints.length - 1];
+      if (!lastPoint || lastPoint.x !== this.activePreviewPoint.x || lastPoint.y !== this.activePreviewPoint.y) {
+        previewPoints.push(this.activePreviewPoint);
       }
-      const positions = this.activeStrokePositionsBuffer;
-      for (let i = 0; i < this.activeStroke.length; i += 1) {
-        const point = this.activeStroke[i];
-        this._localToWorld(this.activePatch, point, this.tempWorldPoint);
-        const idx = i * 3;
-        positions[idx] = this.tempWorldPoint.x;
-        positions[idx + 1] = this.tempWorldPoint.y;
-        positions[idx + 2] = this.tempWorldPoint.z;
-      }
-      this._localToWorld(this.activePatch, this.activePreviewPoint, this.tempWorldPoint);
-      const previewIdx = this.activeStroke.length * 3;
-      positions[previewIdx] = this.tempWorldPoint.x;
-      positions[previewIdx + 1] = this.tempWorldPoint.y;
-      positions[previewIdx + 2] = this.tempWorldPoint.z;
-      if (!this.activeStrokeRenderable || this.activeStrokePatchKey !== this.activePatch.key) {
-        this._clearActiveStrokeRenderable();
-        const geometry = new LineGeometry();
-        const material = new LineMaterial({
-          color: this.uiManager.getBrushColor(),
-          linewidth: clamp3(this.uiManager.getBrushSize(), 1, 24),
-          transparent: true,
-          depthWrite: false,
-          toneMapped: true,
-          polygonOffset: true,
-          polygonOffsetFactor: -2
-        });
-        material.resolution.set(this.viewportWidth, this.viewportHeight);
-        this.activeStrokeRenderable = new Line22(geometry, material);
-        this.activeStrokeRenderable.renderOrder = 2;
-        this.activeStrokeRenderable.frustumCulled = true;
-        this.activeStrokePatchKey = this.activePatch.key;
-        this.activePatch.group.add(this.activeStrokeRenderable);
-        this.lineMaterials.add(material);
-      } else {
-        const liveMaterial = this.activeStrokeRenderable.material;
-        if (liveMaterial?.color) {
-          liveMaterial.color.set(this.uiManager.getBrushColor());
-        }
-        if (liveMaterial) {
-          liveMaterial.linewidth = clamp3(this.uiManager.getBrushSize(), 1, 24);
-        }
-      }
-      this.activeStrokeRenderable.geometry.setPositions(positions.subarray(0, requiredLength));
-      this.activeStrokeRenderable.computeLineDistances();
+      const previewStroke = {
+        id: "__preview__",
+        color: this.uiManager.getBrushColor(),
+        thickness: clamp3(this.uiManager.getBrushSize(), 1, 24),
+        points: previewPoints
+      };
+      this._ensureBakedLayer(this.activePatch);
+      this._renderPatchCanvas(this.activePatch, previewStroke);
+      this.activePreviewStrokeVisible = true;
     }
     _createInitialPreviewPoint(localPoint) {
       const offset = Math.max(this.minDistanceBetweenPoints * 0.35, 0.01);
@@ -49618,8 +50310,8 @@
       ];
       for (const candidate of candidates) {
         const clamped = {
-          x: clamp3(candidate.x, -this.patchHalfSize, this.patchHalfSize),
-          y: clamp3(candidate.y, -this.patchHalfSize, this.patchHalfSize)
+          x: clamp3(candidate.x, this.activePatch.minX, this.activePatch.maxX),
+          y: clamp3(candidate.y, this.activePatch.minY, this.activePatch.maxY)
         };
         if (clamped.x !== localPoint.x || clamped.y !== localPoint.y) {
           return clamped;
@@ -49628,23 +50320,25 @@
       return { x: localPoint.x + offset, y: localPoint.y };
     }
     _clearActiveStrokeRenderable() {
-      if (!this.activeStrokeRenderable) {
-        this.activeStrokePatchKey = null;
-        return;
-      }
-      const liveLine = this.activeStrokeRenderable;
-      const { geometry, material } = liveLine;
-      if (liveLine.parent) {
-        liveLine.parent.remove(liveLine);
-      }
-      geometry?.dispose?.();
-      if (material) {
-        this.lineMaterials.delete(material);
-        material.dispose?.();
+      if (this.activeStrokeRenderable) {
+        const liveLine = this.activeStrokeRenderable;
+        const { geometry, material } = liveLine;
+        if (liveLine.parent) {
+          liveLine.parent.remove(liveLine);
+        }
+        geometry?.dispose?.();
+        if (material) {
+          this.lineMaterials.delete(material);
+          material.dispose?.();
+        }
       }
       this.activeStrokeRenderable = null;
       this.activeStrokePatchKey = null;
       this.activeStrokePositionsBuffer = null;
+      if (this.activePreviewStrokeVisible && this.activePatch?.bakedLayer) {
+        this._renderPatchCanvas(this.activePatch);
+      }
+      this.activePreviewStrokeVisible = false;
     }
     _attachStrokeRenderable(patch, stroke) {
       const positions = new Float32Array(stroke.points.length * 3);
@@ -49662,16 +50356,18 @@
         color: stroke.color,
         linewidth: stroke.thickness,
         transparent: true,
+        depthTest: false,
         depthWrite: false,
-        toneMapped: true,
-        polygonOffset: true,
-        polygonOffsetFactor: -2
+        toneMapped: true
       });
       material.resolution.set(this.viewportWidth, this.viewportHeight);
       const line = new Line22(geometry, material);
       line.computeLineDistances();
-      line.renderOrder = 2;
-      line.frustumCulled = true;
+      const renderOrder = Number.isFinite(stroke.renderOrder) ? stroke.renderOrder : this._nextStrokeRenderOrder();
+      line.renderOrder = renderOrder;
+      stroke.renderOrder = renderOrder;
+      this.strokeRenderOrderCounter = Math.max(this.strokeRenderOrderCounter, renderOrder);
+      line.frustumCulled = false;
       patch.group.add(line);
       stroke.renderable = line;
       this.lineMaterials.add(material);
@@ -49681,31 +50377,55 @@
       if (!patch.bakedLayer) {
         return;
       }
-      const count = Math.min(this.bakeBatchSize, patch.liveStrokes.length);
-      const strokesToBake = patch.liveStrokes.splice(0, count);
-      const { ctx, canvas, texture } = patch.bakedLayer;
+      const strokesToBake = patch.liveStrokes.splice(0, patch.liveStrokes.length);
       for (const stroke of strokesToBake) {
-        if (!stroke.points || stroke.points.length < 2) {
-          continue;
-        }
-        ctx.beginPath();
-        ctx.strokeStyle = stroke.color;
-        ctx.lineWidth = Math.max(1, stroke.thickness * 2);
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        for (let i = 0; i < stroke.points.length; i += 1) {
-          const point = stroke.points[i];
-          const px2 = (point.x / patch.halfSize * 0.5 + 0.5) * canvas.width;
-          const py2 = (-point.y / patch.halfSize * 0.5 + 0.5) * canvas.height;
-          if (i === 0) {
-            ctx.moveTo(px2, py2);
-          } else {
-            ctx.lineTo(px2, py2);
-          }
-        }
-        ctx.stroke();
+        patch.strokeArchive.set(stroke.id, stroke);
         this._disposeStrokeRenderable(stroke);
-        this.strokeIndex.delete(stroke.id);
+      }
+      this._renderPatchCanvas(patch);
+    }
+    _getTextureLineWidth(patch, canvas, stroke) {
+      const worldWidth = Math.max(1e-3, patch.maxX - patch.minX);
+      const pixelsPerWorldUnit = canvas.width / worldWidth;
+      return Math.max(
+        1,
+        stroke.thickness * pixelsPerWorldUnit * this.textureBrushScale
+      );
+    }
+    _drawStrokeToPatchCanvas(patch, stroke) {
+      if (!patch?.bakedLayer || !stroke?.points || stroke.points.length < 2) {
+        return;
+      }
+      const { ctx, canvas } = patch.bakedLayer;
+      ctx.beginPath();
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = this._getTextureLineWidth(patch, canvas, stroke);
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      for (let i = 0; i < stroke.points.length; i += 1) {
+        const point = stroke.points[i];
+        const px2 = (point.x - patch.minX) / Math.max(1e-3, patch.maxX - patch.minX) * canvas.width;
+        const py2 = (1 - (point.y - patch.minY) / Math.max(1e-3, patch.maxY - patch.minY)) * canvas.height;
+        if (i === 0) {
+          ctx.moveTo(px2, py2);
+        } else {
+          ctx.lineTo(px2, py2);
+        }
+      }
+      ctx.stroke();
+    }
+    _renderPatchCanvas(patch, previewStroke = null) {
+      if (!patch?.bakedLayer) {
+        return;
+      }
+      const { ctx, canvas, texture } = patch.bakedLayer;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = true;
+      for (const stroke of patch.strokeArchive.values()) {
+        this._drawStrokeToPatchCanvas(patch, stroke);
+      }
+      if (previewStroke) {
+        this._drawStrokeToPatchCanvas(patch, previewStroke);
       }
       texture.needsUpdate = true;
     }
@@ -49714,50 +50434,51 @@
         return;
       }
       const canvas = document.createElement("canvas");
-      canvas.width = 1024;
-      canvas.height = 1024;
+      canvas.width = this.bakedTextureSize;
+      canvas.height = this.bakedTextureSize;
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const texture = new CanvasTexture(canvas);
       texture.colorSpace = SRGBColorSpace;
       texture.anisotropy = 4;
-      const material = new MeshStandardMaterial({
+      const material = new MeshBasicMaterial({
         map: texture,
         transparent: true,
-        roughness: 0.85,
-        metalness: 0,
         depthWrite: false,
         polygonOffset: true,
         polygonOffsetFactor: -1
       });
       const plane = new Mesh(
-        new PlaneGeometry(patch.halfSize * 2, patch.halfSize * 2),
+        new PlaneGeometry(this.patchSize, this.patchSize),
         material
       );
       this.tempBasisMatrix.makeBasis(patch.tangent, patch.bitangent, patch.normal);
       plane.quaternion.setFromRotationMatrix(this.tempBasisMatrix);
+      plane.scale.set(patch.halfWidth * 2 / this.patchSize, patch.halfHeight * 2 / this.patchSize, 1);
       plane.position.copy(patch.center).addScaledVector(patch.normal, this.surfaceOffset * 0.7);
       plane.renderOrder = 1;
       patch.group.add(plane);
       patch.bakedLayer = { canvas, ctx, texture, plane };
     }
     _eraseAtPoint(localPoint) {
-      if (!this.activePatch) {
-        return;
-      }
+      if (!this.activePatch) return;
       const eraseRadius = clamp3(this.uiManager.getBrushSize() * 0.03, 0.06, 0.45);
       const removedIds = [];
-      for (let i = this.activePatch.liveStrokes.length - 1; i >= 0; i -= 1) {
-        const stroke = this.activePatch.liveStrokes[i];
+      const removedSnapshots = [];
+      const strokes = Array.from(this.activePatch.strokeArchive.values());
+      for (const stroke of strokes) {
         const distance = minDistanceToPolyline(localPoint, stroke.points);
         if (distance <= eraseRadius) {
-          this.activePatch.liveStrokes.splice(i, 1);
-          this._disposeStrokeRenderable(stroke);
-          this.strokeIndex.delete(stroke.id);
+          removedSnapshots.push(this._snapshotStrokeForUndo(stroke, this.activePatch));
           removedIds.push(stroke.id);
         }
       }
       if (removedIds.length > 0) {
+        this._doAction({
+          type: "erase",
+          patchKey: this.activePatch.key,
+          strokes: removedSnapshots
+        });
         const packet = {
           id: this._nextStrokeId(),
           erase: true,
@@ -49782,13 +50503,58 @@
         if (!patch) {
           continue;
         }
-        const idx = patch.liveStrokes.findIndex((stroke) => stroke.id === id);
-        if (idx !== -1) {
-          const [stroke] = patch.liveStrokes.splice(idx, 1);
-          this._disposeStrokeRenderable(stroke);
-        }
-        this.strokeIndex.delete(id);
+        this._removeStrokeFromPatch(patch, id);
       }
+    }
+    _snapshotStrokeForUndo(stroke, patch) {
+      return {
+        id: stroke.id,
+        color: stroke.color,
+        thickness: stroke.thickness,
+        createdAt: stroke.createdAt,
+        playerId: stroke.playerId || null,
+        renderOrder: stroke.renderable?.renderOrder ?? stroke.renderOrder ?? null,
+        patchKey: patch.key,
+        patch: {
+          key: patch.key,
+          meshId: patch.meshId,
+          center: [patch.center.x, patch.center.y, patch.center.z],
+          normal: [patch.normal.x, patch.normal.y, patch.normal.z],
+          tangent: [patch.tangent.x, patch.tangent.y, patch.tangent.z],
+          bitangent: [patch.bitangent.x, patch.bitangent.y, patch.bitangent.z],
+          halfSize: patch.halfSize,
+          halfWidth: patch.halfWidth,
+          halfHeight: patch.halfHeight,
+          minX: patch.minX,
+          maxX: patch.maxX,
+          minY: patch.minY,
+          maxY: patch.maxY
+        },
+        points: stroke.points.map((point) => ({ x: point.x, y: point.y }))
+      };
+    }
+    _removeStrokeFromPatch(patch, strokeId) {
+      if (!patch || !strokeId) {
+        return false;
+      }
+      const stroke = patch.strokeArchive?.get(strokeId) || this.strokeIndex.get(strokeId)?.stroke || null;
+      if (!stroke) {
+        return false;
+      }
+      const liveIndex = patch.liveStrokes.findIndex((entry) => entry.id === strokeId);
+      if (liveIndex !== -1) {
+        const [liveStroke] = patch.liveStrokes.splice(liveIndex, 1);
+        this._disposeStrokeRenderable(liveStroke);
+      }
+      patch.strokeArchive?.delete(strokeId);
+      this.strokeIndex.delete(strokeId);
+      if (patch.bakedLayer) {
+        this._rebuildBakedLayer(patch);
+      }
+      return true;
+    }
+    _rebuildBakedLayer(patch) {
+      this._renderPatchCanvas(patch);
     }
     _disposeStrokeRenderable(stroke) {
       if (!stroke.renderable) {
@@ -49819,7 +50585,13 @@
           normal: [patch.normal.x, patch.normal.y, patch.normal.z],
           tangent: [patch.tangent.x, patch.tangent.y, patch.tangent.z],
           bitangent: [patch.bitangent.x, patch.bitangent.y, patch.bitangent.z],
-          halfSize: patch.halfSize
+          halfSize: patch.halfSize,
+          halfWidth: patch.halfWidth,
+          halfHeight: patch.halfHeight,
+          minX: patch.minX,
+          maxX: patch.maxX,
+          minY: patch.minY,
+          maxY: patch.maxY
         },
         color: stroke.color,
         thickness: stroke.thickness,
@@ -49862,10 +50634,10 @@
       const material = new MeshBasicMaterial({
         color: 16777215,
         transparent: true,
-        opacity: 0.15,
+        opacity: 0,
         depthWrite: false,
         side: DoubleSide,
-        wireframe: true
+        wireframe: false
       });
       const mesh = new Mesh(new PlaneGeometry(this.patchSize, this.patchSize), material);
       mesh.visible = false;
@@ -49889,22 +50661,33 @@
         half,
         0
       ], 3));
-      const material = new LineBasicMaterial({
-        color: 3928831,
+      const material = new LineDashedMaterial({
+        color: 16777215,
+        dashSize: this.patchSize * 0.12,
+        gapSize: this.patchSize * 0.07,
         transparent: true,
         opacity: 0.95,
         depthWrite: false
       });
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.dashOffset = { value: 0 };
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "uniform float totalSize;",
+          "uniform float totalSize;\nuniform float dashOffset;"
+        ).replace(
+          "if ( mod( vLineDistance, totalSize ) > dashSize ) {",
+          "if ( mod( vLineDistance + dashOffset, totalSize ) > dashSize ) {"
+        );
+        material.userData.dashShader = shader;
+      };
       const loop = new LineLoop(geometry, material);
+      loop.computeLineDistances();
       loop.visible = false;
       loop.renderOrder = 4;
       return loop;
     }
     _updatePreviewMesh(descriptor) {
-      this.tempBasisMatrix.makeBasis(descriptor.tangent, descriptor.bitangent, descriptor.normal);
-      this.previewMesh.quaternion.setFromRotationMatrix(this.tempBasisMatrix);
-      this.previewMesh.position.copy(descriptor.center).addScaledVector(descriptor.normal, this.surfaceOffset * 0.8);
-      this.previewMesh.visible = true;
+      this.previewMesh.visible = false;
     }
     _updateDrawBoundaryMesh(descriptor) {
       if (!descriptor) {
@@ -49913,6 +50696,11 @@
       }
       this.tempBasisMatrix.makeBasis(descriptor.tangent, descriptor.bitangent, descriptor.normal);
       this.drawBoundaryMesh.quaternion.setFromRotationMatrix(this.tempBasisMatrix);
+      this.drawBoundaryMesh.scale.set(
+        descriptor.halfWidth * 2 / this.patchSize,
+        descriptor.halfHeight * 2 / this.patchSize,
+        1
+      );
       this.drawBoundaryMesh.position.copy(descriptor.center).addScaledVector(descriptor.normal, this.surfaceOffset * 1.05);
       this.drawBoundaryMesh.visible = true;
     }
@@ -50187,6 +50975,9 @@
   };
 
   // public/ui/UIManager.js
+  function clamp4(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
   var UIManager = class {
     constructor() {
       this.root = document;
@@ -50198,14 +50989,31 @@
       this.connectionStatus = this.root.getElementById("connection-status");
       this.drawPrompt = this.root.getElementById("draw-prompt");
       this.drawHud = this.root.getElementById("draw-hud");
-      this.colorInput = this.root.getElementById("stroke-color");
+      this.colorWheelWrap = this.root.getElementById("stroke-color-wheel-wrap");
+      this.colorWheel = this.root.getElementById("stroke-color-wheel");
+      this.colorWheelCursor = this.root.getElementById("stroke-color-wheel-cursor");
+      this.colorPreview = this.root.getElementById("stroke-color-preview");
+      this.colorHexLabel = this.root.getElementById("stroke-color-hex");
+      this.valueInput = this.root.getElementById("stroke-value");
+      this.valueLabel = this.root.getElementById("stroke-value-label");
+      this.rgbRInput = this.root.getElementById("stroke-r");
+      this.rgbGInput = this.root.getElementById("stroke-g");
+      this.rgbBInput = this.root.getElementById("stroke-b");
       this.thicknessInput = this.root.getElementById("stroke-size");
       this.sizeValue = this.root.getElementById("stroke-size-value");
       this.toolBrush = this.root.getElementById("tool-brush");
       this.toolErase = this.root.getElementById("tool-erase");
+      this.undoButton = this.root.getElementById("tool-undo");
       this.debugPanel = this.root.getElementById("debug-panel");
       this.debugExpanded = false;
       this.tool = "brush";
+      this.brushColor = "#ff8fbc";
+      this.currentHue = 336;
+      this.currentSaturation = 0.44;
+      this.currentValue = 1;
+      this.wheelDragging = false;
+      this.drawModeActive = false;
+      this.undoHandler = null;
       this._bindInputs();
     }
     bindStart(handler) {
@@ -50268,16 +51076,20 @@
       this.drawPrompt.classList.toggle("visible", !!visible);
     }
     setDrawMode(active) {
+      this.drawModeActive = active === true;
       if (!this.drawHud) {
         return;
       }
-      this.drawHud.classList.toggle("visible", !!active);
+      this.drawHud.classList.toggle("visible", this.drawModeActive);
+    }
+    bindUndo(handler) {
+      this.undoHandler = typeof handler === "function" ? handler : null;
     }
     getTool() {
       return this.tool;
     }
     getBrushColor() {
-      return this.colorInput ? this.colorInput.value : "#ff3d3d";
+      return this.brushColor || "#ff8fbc";
     }
     getBrushSize() {
       return this.thicknessInput ? Number(this.thicknessInput.value) : 6;
@@ -50308,6 +51120,32 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       this.debugPanel.textContent = `FPS ${stats.fps.toFixed(1)} | Draw ${stats.drawCalls} | Triangles ${stats.triangles} | Memory ${memory}`;
     }
     _bindInputs() {
+      if (this.colorWheel && this.colorWheelCursor) {
+        this._initColorWheel();
+      }
+      if (this.valueInput && this.valueLabel) {
+        this.valueLabel.textContent = `${this.valueInput.value}%`;
+        this.valueInput.addEventListener("input", () => {
+          const percent = Math.max(0, Math.min(100, Number(this.valueInput.value) || 0));
+          this.currentValue = percent / 100;
+          this.valueLabel.textContent = `${Math.round(percent)}%`;
+          this._applyCurrentHsvToBrush();
+        });
+      }
+      if (this.rgbRInput && this.rgbGInput && this.rgbBInput) {
+        const onRgbInput = () => {
+          const r = clamp4(Number(this.rgbRInput.value), 0, 255);
+          const g = clamp4(Number(this.rgbGInput.value), 0, 255);
+          const b = clamp4(Number(this.rgbBInput.value), 0, 255);
+          this.rgbRInput.value = String(Math.round(r));
+          this.rgbGInput.value = String(Math.round(g));
+          this.rgbBInput.value = String(Math.round(b));
+          this._setBrushColorFromRgb(Math.round(r), Math.round(g), Math.round(b));
+        };
+        this.rgbRInput.addEventListener("input", onRgbInput);
+        this.rgbGInput.addEventListener("input", onRgbInput);
+        this.rgbBInput.addEventListener("input", onRgbInput);
+      }
       if (this.thicknessInput && this.sizeValue) {
         this.sizeValue.textContent = `${this.thicknessInput.value}px`;
         this.thicknessInput.addEventListener("input", () => {
@@ -50326,6 +51164,297 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
           this.toolBrush.classList.remove("active");
         });
       }
+      if (this.undoButton) {
+        this.undoButton.addEventListener("click", () => {
+          this._invokeUndo();
+        });
+      }
+      window.addEventListener("keydown", (event) => {
+        if (!this.drawModeActive) {
+          return;
+        }
+        const isUndoCombo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z";
+        if (!isUndoCombo) {
+          return;
+        }
+        event.preventDefault();
+        this._invokeUndo();
+      });
+      this._syncColorPreview(this.brushColor);
+    }
+    _invokeUndo() {
+      if (this.undoHandler) {
+        this.undoHandler();
+      }
+    }
+    _setBrushColor(color) {
+      if (!color) {
+        return;
+      }
+      this.brushColor = color;
+      const hsv = this._hexToHsv(color);
+      if (hsv) {
+        this.currentHue = hsv.h;
+        this.currentSaturation = hsv.s;
+        this.currentValue = hsv.v;
+        this._syncWheelCursorFromHsv();
+        this._syncValueInputFromState();
+        this._syncRgbInputsFromColor(color);
+        this._syncColorPreview(color);
+      }
+    }
+    _setBrushColorFromRgb(r, g, b) {
+      const color = this._rgbToHex(r, g, b);
+      this.brushColor = color;
+      const hsv = this._rgbToHsv(r, g, b);
+      this.currentHue = hsv.h;
+      this.currentSaturation = hsv.s;
+      this.currentValue = hsv.v;
+      this._syncWheelCursorFromHsv();
+      this._syncValueInputFromState();
+      this._syncRgbInputsFromColor(color);
+      this._syncColorPreview(color);
+    }
+    _applyCurrentHsvToBrush() {
+      const color = this._hsvToHex(this.currentHue, this.currentSaturation, this.currentValue);
+      this.brushColor = color;
+      this._syncRgbInputsFromColor(color);
+      this._syncColorPreview(color);
+    }
+    _syncColorPreview(color) {
+      if (this.colorPreview) {
+        this.colorPreview.style.backgroundColor = color;
+      }
+      if (this.colorHexLabel) {
+        this.colorHexLabel.textContent = String(color || "").toLowerCase();
+      }
+    }
+    _initColorWheel() {
+      const ctx = this.colorWheel.getContext("2d");
+      if (!ctx) {
+        return;
+      }
+      this._renderColorWheel(ctx);
+      const pickColor = (event) => {
+        const rect = this.colorWheel.getBoundingClientRect();
+        const x = (event.clientX - rect.left) / rect.width * this.colorWheel.width;
+        const y = (event.clientY - rect.top) / rect.height * this.colorWheel.height;
+        const center = this.colorWheel.width * 0.5;
+        const radius = center - 1;
+        let dx = x - center;
+        let dy = y - center;
+        const distance = Math.hypot(dx, dy);
+        if (distance > radius && distance > 0) {
+          const scale = radius / distance;
+          dx *= scale;
+          dy *= scale;
+        }
+        const hueRadians = (Math.atan2(dy, dx) + Math.PI * 2) % (Math.PI * 2);
+        const hue = hueRadians / (Math.PI * 2) * 360;
+        const saturation = Math.max(0, Math.min(1, Math.hypot(dx, dy) / radius));
+        this.currentHue = hue;
+        this.currentSaturation = saturation;
+        this._applyCurrentHsvToBrush();
+        this._setColorWheelCursor(center + dx, center + dy);
+      };
+      this.colorWheel.addEventListener("pointerdown", (event) => {
+        this.wheelDragging = true;
+        pickColor(event);
+        this.colorWheel.setPointerCapture?.(event.pointerId);
+      });
+      this.colorWheel.addEventListener("pointermove", (event) => {
+        if (!this.wheelDragging) {
+          return;
+        }
+        pickColor(event);
+      });
+      const endDrag = () => {
+        this.wheelDragging = false;
+      };
+      this.colorWheel.addEventListener("pointerup", endDrag);
+      this.colorWheel.addEventListener("pointercancel", endDrag);
+      this.colorWheel.addEventListener("pointerleave", endDrag);
+      const hsv = this._hexToHsv(this.brushColor);
+      if (hsv) {
+        this.currentHue = hsv.h;
+        this.currentSaturation = hsv.s;
+        this.currentValue = hsv.v;
+        this._syncWheelCursorFromHsv();
+        this._syncValueInputFromState();
+        this._syncRgbInputsFromColor(this.brushColor);
+      }
+    }
+    _renderColorWheel(ctx) {
+      const size = this.colorWheel.width;
+      const image = ctx.createImageData(size, size);
+      const center = size * 0.5;
+      const radius = center - 1;
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const dx = x - center;
+          const dy = y - center;
+          const dist = Math.hypot(dx, dy);
+          const idx = (y * size + x) * 4;
+          if (dist > radius) {
+            image.data[idx + 3] = 0;
+            continue;
+          }
+          const hueRadians = (Math.atan2(dy, dx) + Math.PI * 2) % (Math.PI * 2);
+          const hue = hueRadians / (Math.PI * 2) * 360;
+          const sat = Math.max(0, Math.min(1, dist / radius));
+          const rgb = this._hsvToRgb(hue, sat, 1);
+          image.data[idx] = rgb.r;
+          image.data[idx + 1] = rgb.g;
+          image.data[idx + 2] = rgb.b;
+          image.data[idx + 3] = 255;
+        }
+      }
+      ctx.putImageData(image, 0, 0);
+    }
+    _setColorWheelCursor(x, y) {
+      const size = this.colorWheel.width;
+      const leftPercent = x / size * 100;
+      const topPercent = y / size * 100;
+      this.colorWheelCursor.style.left = `${leftPercent}%`;
+      this.colorWheelCursor.style.top = `${topPercent}%`;
+    }
+    _syncWheelCursorFromHsv() {
+      if (!this.colorWheel || !this.colorWheelCursor) {
+        return;
+      }
+      const angle = this.currentHue / 360 * Math.PI * 2;
+      const r = this.currentSaturation * (this.colorWheel.width * 0.5 - 1);
+      const center = this.colorWheel.width * 0.5;
+      this._setColorWheelCursor(
+        center + Math.cos(angle) * r,
+        center + Math.sin(angle) * r
+      );
+    }
+    _syncValueInputFromState() {
+      if (!this.valueInput || !this.valueLabel) {
+        return;
+      }
+      const percent = Math.round(clamp4(this.currentValue * 100, 0, 100));
+      this.valueInput.value = String(percent);
+      this.valueLabel.textContent = `${percent}%`;
+    }
+    _syncRgbInputsFromColor(color) {
+      if (!this.rgbRInput || !this.rgbGInput || !this.rgbBInput) {
+        return;
+      }
+      const rgb = this._hexToRgb(color);
+      if (!rgb) {
+        return;
+      }
+      this.rgbRInput.value = String(rgb.r);
+      this.rgbGInput.value = String(rgb.g);
+      this.rgbBInput.value = String(rgb.b);
+    }
+    _hsvToRgb(h, s, v) {
+      const c = v * s;
+      const hh = h % 360 / 60;
+      const x = c * (1 - Math.abs(hh % 2 - 1));
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      if (hh >= 0 && hh < 1) {
+        r = c;
+        g = x;
+      } else if (hh < 2) {
+        r = x;
+        g = c;
+      } else if (hh < 3) {
+        g = c;
+        b = x;
+      } else if (hh < 4) {
+        g = x;
+        b = c;
+      } else if (hh < 5) {
+        r = x;
+        b = c;
+      } else {
+        r = c;
+        b = x;
+      }
+      const m = v - c;
+      return {
+        r: Math.round((r + m) * 255),
+        g: Math.round((g + m) * 255),
+        b: Math.round((b + m) * 255)
+      };
+    }
+    _hsvToHex(h, s, v) {
+      const { r, g, b } = this._hsvToRgb(h, s, v);
+      return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+    }
+    _rgbToHex(r, g, b) {
+      return `#${[r, g, b].map((value) => clamp4(Math.round(value), 0, 255).toString(16).padStart(2, "0")).join("")}`;
+    }
+    _hexToRgb(hex) {
+      const value = String(hex || "").trim().replace("#", "");
+      if (value.length !== 6) {
+        return null;
+      }
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+        return null;
+      }
+      return { r, g, b };
+    }
+    _rgbToHsv(r8, g8, b8) {
+      const r = clamp4(r8, 0, 255) / 255;
+      const g = clamp4(g8, 0, 255) / 255;
+      const b = clamp4(b8, 0, 255) / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      let h = 0;
+      if (delta > 0) {
+        if (max === r) {
+          h = 60 * ((g - b) / delta % 6);
+        } else if (max === g) {
+          h = 60 * ((b - r) / delta + 2);
+        } else {
+          h = 60 * ((r - g) / delta + 4);
+        }
+      }
+      if (h < 0) {
+        h += 360;
+      }
+      const s = max === 0 ? 0 : delta / max;
+      return { h, s, v: max };
+    }
+    _hexToHsv(hex) {
+      const value = String(hex || "").trim().replace("#", "");
+      if (value.length !== 6) {
+        return null;
+      }
+      const r = parseInt(value.slice(0, 2), 16) / 255;
+      const g = parseInt(value.slice(2, 4), 16) / 255;
+      const b = parseInt(value.slice(4, 6), 16) / 255;
+      if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+        return null;
+      }
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      let h = 0;
+      if (delta > 0) {
+        if (max === r) {
+          h = 60 * ((g - b) / delta % 6);
+        } else if (max === g) {
+          h = 60 * ((b - r) / delta + 2);
+        } else {
+          h = 60 * ((r - g) / delta + 4);
+        }
+      }
+      if (h < 0) {
+        h += 360;
+      }
+      const s = max === 0 ? 0 : delta / max;
+      return { h, s, v: max };
     }
   };
 
@@ -50335,9 +51464,11 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
     const params = new URLSearchParams(globalThis.location.search);
     const apiBaseUrl = (params.get("api") || globalConfig.apiBaseUrl || "").trim() || null;
     const socketUrl = (params.get("socket") || globalConfig.socketUrl || apiBaseUrl || "").trim() || null;
+    const stylizePreset = (params.get("look") || globalConfig.stylizePreset || "soft").trim().toLowerCase();
     return {
       apiBaseUrl,
-      socketUrl
+      socketUrl,
+      stylizePreset
     };
   }
   var GameApp = class {
@@ -50378,7 +51509,8 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       this.ui.setDebugExpanded(false);
       this.rendererSystem = new RendererSystem({
         enableBloom: false,
-        maxPixelRatio: 1.25
+        maxPixelRatio: 1.25,
+        stylizePreset: this.runtimeConfig.stylizePreset
       });
       this.rendererSystem.attachTo(document.body);
       this.sceneManager = new SceneManager((progress, label) => {
@@ -50404,6 +51536,9 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       );
       this.drawingSystem.setCollidableMeshes(this.sceneManager.getCollidableMeshes());
       this.drawingSystem.setPlayerObject(this.playerController.getLocalPlayer());
+      this.ui.bindUndo(() => {
+        this.drawingSystem.undo();
+      });
       this.socketManager = new SocketManager({
         socketUrl: this.runtimeConfig.socketUrl
       });
@@ -50442,6 +51577,14 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
         event.preventDefault();
         this.setDiagnosticsEnabled(!this.debugTelemetryEnabled);
       });
+      window.addEventListener("keydown", (event) => {
+        if (event.code !== "F4" || event.repeat) {
+          return;
+        }
+        event.preventDefault();
+        const nextPreset = this.rendererSystem.cycleStylizePreset();
+        console.info("[PostFX] stylize preset=%s (off|soft|medium)", nextPreset);
+      });
     }
     _exposeDebugApi() {
       globalThis.__graffitiDebug = {
@@ -50450,8 +51593,11 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
         toggle: () => this.setDiagnosticsEnabled(!this.debugTelemetryEnabled),
         dump: () => this._dumpDebugFrames(),
         dumpHitches: () => this._dumpHitchEvents(),
+        setLook: (preset = "soft") => this.rendererSystem.setStylizePreset(String(preset).toLowerCase()),
+        cycleLook: () => this.rendererSystem.cycleStylizePreset(),
         getState: () => ({
           enabled: this.debugTelemetryEnabled,
+          look: this.rendererSystem?.stylizePreset || "soft",
           longFrames: this.debugRollingLongFrames,
           thresholdMs: this.debugLongFrameThresholdMs,
           frames: this._getOrderedDebugFrames(),

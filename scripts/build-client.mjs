@@ -1,11 +1,12 @@
 import path from 'node:path';
-import { build } from 'esbuild';
+import { build, context } from 'esbuild';
 
 const root = process.cwd();
 const entry = path.resolve(root, 'public', 'script.js');
 const outfile = path.resolve(root, 'public', 'dist', 'app.js');
+const watchMode = process.argv.includes('--watch');
 
-await build({
+const buildOptions = {
   entryPoints: [entry],
   outfile,
   bundle: true,
@@ -14,4 +15,12 @@ await build({
   format: 'iife',
   sourcemap: true,
   logLevel: 'info'
-});
+};
+
+if (!watchMode) {
+  await build(buildOptions);
+} else {
+  const buildContext = await context(buildOptions);
+  await buildContext.watch();
+  console.log('Watching client bundle for changes...');
+}

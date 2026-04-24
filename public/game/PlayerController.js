@@ -2,7 +2,7 @@ import * as THREE from '../vendor/three/build/three.module.js';
 import { GLTFLoader } from '../vendor/three/examples/jsm/loaders/GLTFLoader.js';
 import { clamp, damp } from '../utils/math.js';
 
-const PLAYABLE_STATES = ['idle', 'walk', 'run', 'jump'];
+const PLAYABLE_STATES = ['idle', 'walk', 'run'];
 const QUARTER_TURN = Math.PI * 0.5;
 const PLAYER_MODEL_CANDIDATES = [
   'models/idkbro.glb',
@@ -18,6 +18,11 @@ function normalizeAngle(value) {
   while (angle > Math.PI) angle -= Math.PI * 2;
   while (angle < -Math.PI) angle += Math.PI * 2;
   return angle;
+}
+
+function dampAngle(current, target, lambda, dt) {
+  const delta = normalizeAngle(target - current);
+  return normalizeAngle(current + (delta * (1 - Math.exp(-lambda * dt))));
 }
 
 function angleDistance(a, b) {
@@ -153,6 +158,10 @@ export class PlayerController {
     this.previousOnGround = null;
     this.stableGroundFrames = 0;
     this.hasStableGroundContact = false;
+    this.jumpFrameTakeoff = 10;
+    this.jumpFrameApex = 20;
+    this.jumpFrameLand = 30;
+    this.jumpFrameRecover = 45;
 
     this.debugAnimations = isAnimationDebugEnabled();
 
@@ -573,10 +582,6 @@ export class PlayerController {
     if (input.justJumped) {
       this.jumpLockActive = true;
       this.groundedFrameStreak = 0;
-    } else if (this.hasStableGroundContact && this.previousOnGround === true && input.onGround === false) {
-      // Entering air from a stable grounded frame (jump or ledge step).
-      this.jumpLockActive = true;
-      this.groundedFrameStreak = 0;
     }
 
     if (this.jumpLockActive) {
@@ -648,31 +653,13 @@ export class PlayerController {
     }
 
     this.targetRotation = Math.atan2(input.vx, input.vz) + this.modelFacingOffset;
-    this.localPlayer.rotation.y = damp(this.localPlayer.rotation.y, this.targetRotation, 14, deltaSeconds);
+    this.localPlayer.rotation.y = dampAngle(this.localPlayer.rotation.y, this.targetRotation, 14, deltaSeconds);
   }
 
   _resolveAnimationState(input) {
-    // If jump clip is clamped on its last frame and we've landed,
-    // force a locomotion/idle state so we don't get stuck in jump pose.
-    if (
-      this.currentState === 'jump'
-      && this.currentAction
-      && this.currentAction.isRunning() === false
-      && input.onGround
-    ) {
+    if (this.currentState === 'jump') {
       this.jumpLockActive = false;
       this.groundedFrameStreak = 0;
-      if (input.sprintingForward) {
-        return 'run';
-      }
-      if (input.moving) {
-        return 'walk';
-      }
-      return 'idle';
-    }
-
-    if (input.justJumped || this.jumpLockActive) {
-      return 'jump';
     }
 
     if (input.sprintingForward) {
@@ -734,6 +721,50 @@ export class PlayerController {
 
   _syncLocomotionTimescale(input) {
     if (!this.currentAction) {
+      return;
+    }
+
+    if (this.currentState === 'jump') {
+      const jumpClip = this.currentAction.getClip?.();
+      const jumpDuration = Number.isFinite(jumpClip?.duration) ? jumpClip.duration : 0;
+      if (jumpDuration > 0.001) {
+        const takeoffTime = jumpDuration * (this.jumpFrameTakeoff / 45);
+        const apexTime = jumpDuration * (this.jumpFrameApex / 45);
+        const landTime = jumpDuration * (this.jumpFrameLand / 45);
+        const recoverTime = jumpDuration * (this.jumpFrameRecover / 45);
+
+        if (!input.onGround) {
+          if (this.currentAction.time < takeoffTime) {
+            this.currentAction.setEffectiveTimeScale(1.9);
+            return;
+          }
+
+          if (this.currentAction.time < apexTime && input.verticalVelocity >= 0) {
+            this.currentAction.setEffectiveTimeScale(1.2);
+            return;
+          }
+
+          if (this.currentAction.time < landTime) {
+            this.currentAction.setEffectiveTimeScale(0.95);
+            return;
+          }
+
+          this.currentAction.setEffectiveTimeScale(0.9);
+          return;
+        }
+
+        if (this.currentAction.time < landTime) {
+          this.currentAction.setEffectiveTimeScale(1.6);
+          return;
+        }
+
+        if (this.currentAction.time < recoverTime) {
+          this.currentAction.setEffectiveTimeScale(1.05);
+          return;
+        }
+      }
+
+      this.currentAction.setEffectiveTimeScale(1);
       return;
     }
 

@@ -199,7 +199,8 @@ export class SceneManager {
     this.scene.add(city);
 
     const octreeStart = performance.now();
-    this.worldOctree.fromGraphNode(city);
+    const collisionProxy = this._buildCityCollisionProxy(meshNodes, city);
+    this.worldOctree.fromGraphNode(collisionProxy);
 
     if (this.perfDebug) {
       const now = performance.now();
@@ -267,6 +268,44 @@ export class SceneManager {
     this.cityRoot = fallbackGroup;
     this.scene.add(fallbackGroup);
     this.worldOctree.fromGraphNode(fallbackGroup);
+  }
+
+  _buildCityCollisionProxy(meshNodes, cityRoot) {
+    const proxyGroup = new THREE.Group();
+    proxyGroup.name = 'CityCollisionProxy';
+
+    const unitBoxGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const proxyMaterial = new THREE.MeshBasicMaterial({ visible: false });
+    const tempBox = new THREE.Box3();
+    const tempCenter = new THREE.Vector3();
+    const tempSize = new THREE.Vector3();
+
+    cityRoot.updateWorldMatrix(true, true);
+
+    for (const node of meshNodes) {
+      node.updateWorldMatrix(true, false);
+
+      if (!node.geometry.boundingBox) {
+        node.geometry.computeBoundingBox();
+      }
+
+      tempBox.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+      tempBox.getCenter(tempCenter);
+      tempBox.getSize(tempSize);
+
+      if (tempSize.x < 0.05 || tempSize.y < 0.05 || tempSize.z < 0.05) {
+        continue;
+      }
+
+      const boxMesh = new THREE.Mesh(unitBoxGeometry, proxyMaterial);
+      boxMesh.position.copy(tempCenter);
+      boxMesh.scale.copy(tempSize);
+      boxMesh.updateMatrix();
+      proxyGroup.add(boxMesh);
+    }
+
+    proxyGroup.updateMatrixWorld(true);
+    return proxyGroup;
   }
 
   _setupLights() {

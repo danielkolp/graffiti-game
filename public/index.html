@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Graffiti Runner 3D</title>
+  <title>Graffiti Game</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -26,7 +26,7 @@
   </div>
 
   <div id="hud-root">
-    <div id="crosshair"></div>
+  
 
     <div class="hud-block controls-block">
       <img src="assets/controlstitle.png" alt="Controls" class="controls-title" />
@@ -39,8 +39,27 @@
 
     <div id="draw-hud" class="draw-hud">
       <div class="draw-row">
-        <label for="stroke-color">Color</label>
-        <input id="stroke-color" type="color" value="#ff3d3d" />
+        <label for="stroke-color-wheel">Color</label>
+        <div id="stroke-color-wheel-wrap" class="stroke-color-wheel-wrap" aria-label="Brush color wheel">
+          <canvas id="stroke-color-wheel" class="stroke-color-wheel" width="128" height="128"></canvas>
+          <div id="stroke-color-wheel-cursor" class="stroke-color-wheel-cursor"></div>
+        </div>
+      </div>
+      <div class="draw-row color-preview-row">
+        <label>Preview</label>
+        <div id="stroke-color-preview" class="stroke-color-preview"></div>
+        <span id="stroke-color-hex" class="stroke-color-hex">#ff8fbc</span>
+      </div>
+      <div class="draw-row">
+        <label for="stroke-value">Value</label>
+        <input id="stroke-value" type="range" min="0" max="100" value="100" />
+        <span id="stroke-value-label">100%</span>
+      </div>
+      <div class="draw-row rgb-row">
+        <label>RGB</label>
+        <input id="stroke-r" class="rgb-input" type="number" min="0" max="255" value="255" />
+        <input id="stroke-g" class="rgb-input" type="number" min="0" max="255" value="143" />
+        <input id="stroke-b" class="rgb-input" type="number" min="0" max="255" value="188" />
       </div>
       <div class="draw-row">
         <label for="stroke-size">Thickness</label>
@@ -50,6 +69,9 @@
       <div class="draw-row tool-row">
         <button id="tool-brush" class="tool-button active">Brush</button>
         <button id="tool-erase" class="tool-button">Erase</button>
+      </div>
+      <div class="draw-row">
+        <button id="tool-undo" class="tool-button undo-button">Undo Last Stroke</button>
       </div>
     </div>
 

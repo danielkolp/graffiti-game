@@ -15,10 +15,12 @@ function getRuntimeConfig() {
 
   const apiBaseUrl = (params.get('api') || globalConfig.apiBaseUrl || '').trim() || null;
   const socketUrl = (params.get('socket') || globalConfig.socketUrl || apiBaseUrl || '').trim() || null;
+  const stylizePreset = (params.get('look') || globalConfig.stylizePreset || 'soft').trim().toLowerCase();
 
   return {
     apiBaseUrl,
-    socketUrl
+    socketUrl,
+    stylizePreset
   };
 }
 
@@ -64,7 +66,8 @@ class GameApp {
 
     this.rendererSystem = new RendererSystem({
       enableBloom: false,
-      maxPixelRatio: 1.25
+      maxPixelRatio: 1.25,
+      stylizePreset: this.runtimeConfig.stylizePreset
     });
     this.rendererSystem.attachTo(document.body);
 
@@ -98,6 +101,9 @@ class GameApp {
     );
     this.drawingSystem.setCollidableMeshes(this.sceneManager.getCollidableMeshes());
     this.drawingSystem.setPlayerObject(this.playerController.getLocalPlayer());
+    this.ui.bindUndo(() => {
+  this.drawingSystem.undo();
+});
 
     this.socketManager = new SocketManager({
       socketUrl: this.runtimeConfig.socketUrl
@@ -143,6 +149,16 @@ class GameApp {
       event.preventDefault();
       this.setDiagnosticsEnabled(!this.debugTelemetryEnabled);
     });
+
+    window.addEventListener('keydown', (event) => {
+      if (event.code !== 'F4' || event.repeat) {
+        return;
+      }
+
+      event.preventDefault();
+      const nextPreset = this.rendererSystem.cycleStylizePreset();
+      console.info('[PostFX] stylize preset=%s (off|soft|medium)', nextPreset);
+    });
   }
 
   _exposeDebugApi() {
@@ -152,8 +168,11 @@ class GameApp {
       toggle: () => this.setDiagnosticsEnabled(!this.debugTelemetryEnabled),
       dump: () => this._dumpDebugFrames(),
       dumpHitches: () => this._dumpHitchEvents(),
+      setLook: (preset = 'soft') => this.rendererSystem.setStylizePreset(String(preset).toLowerCase()),
+      cycleLook: () => this.rendererSystem.cycleStylizePreset(),
       getState: () => ({
         enabled: this.debugTelemetryEnabled,
+        look: this.rendererSystem?.stylizePreset || 'soft',
         longFrames: this.debugRollingLongFrames,
         thresholdMs: this.debugLongFrameThresholdMs,
         frames: this._getOrderedDebugFrames(),
