@@ -6,19 +6,20 @@ Important: GitHub Pages does not run Node.js servers, so `server.js` is not host
 - You will still get the 3D client.
 - Multiplayer/state sync requires a separate backend (Render, Railway, etc).
 
-### 1. Use the correct repository name
+### 1. Use the correct URL shape
 
-To publish at:
+For GitHub Pages there are two common URL forms:
 
-https://graffiti-gamedk.github.io/
+- User site (repo name must match account):
+	- `https://<username>.github.io/`
+	- repo must be named `<username>.github.io`
+- Project site (any repo name):
+	- `https://<username>.github.io/<repo-name>/`
 
-your repository must be named exactly:
+For your current account this means:
 
-`graffiti-gamedk.github.io`
-
-If the repository has another name, the URL becomes:
-
-https://graffiti-gamedk.github.io/<repo-name>/
+- user site root: `https://danielkolp.github.io/`
+- this project site (current repo): `https://danielkolp.github.io/graffiti-game/`
 
 ### 2. Enable Pages in GitHub
 
@@ -42,7 +43,7 @@ If you deploy backend separately, open your Pages URL with query params:
 `?api=https://YOUR-BACKEND.example.com`
 
 Examples:
-- `https://graffiti-gamedk.github.io/?api=https://your-backend.onrender.com`
-- `https://graffiti-gamedk.github.io/?api=https://your-backend.onrender.com&socket=https://your-backend.onrender.com`
+- `https://danielkolp.github.io/graffiti-game/?api=https://your-backend.onrender.com`
+- `https://danielkolp.github.io/graffiti-game/?api=https://your-backend.onrender.com&socket=https://your-backend.onrender.com`
 
 If these params are missing, the app runs in offline frontend mode on Pages.

@@ -48,7 +48,7 @@ public/
 
 ## Rendering Upgrade
 
-- Physically-correct renderer (`physicallyCorrectLights = true`, `useLegacyLights = false`)
+- Physically-correct renderer (`physicallyCorrectLights = true`)
 - ACES filmic tone mapping and sRGB output
 - PMREM-processed HDR environment lighting
 - Directional sun + ambient + fill point light
@@ -97,7 +97,8 @@ This preserves editability for recent strokes while keeping draw calls and memor
 
 This project can be hosted on GitHub Pages as a static frontend.
 
-- For root URL `https://graffiti-gamedk.github.io/`, the repository name must be `graffiti-gamedk.github.io`.
+- User site root: `https://danielkolp.github.io/` (repo name must be `danielkolp.github.io`).
+- Project site URL for this repo: `https://danielkolp.github.io/graffiti-game/`.
 - GitHub Pages does not host `server.js`; deploy backend separately for multiplayer persistence.
 - Pages workflow file: `.github/workflows/deploy-pages.yml`
 - Detailed setup: `DEPLOYMENT.md`

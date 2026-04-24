@@ -3,6 +3,8 @@ import { GLTFLoader } from '../vendor/three/examples/jsm/loaders/GLTFLoader.js';
 import { Octree } from '../vendor/three/examples/jsm/math/Octree.js';
 
 const CITY_MODEL_CANDIDATES = [
+  'City.glb',
+  './City.glb',
   '../City.glb',
   '../../City.glb',
   '/City.glb'
@@ -84,6 +86,7 @@ export class SceneManager {
     };
 
     this.gltfLoader = new GLTFLoader(this.loadingManager);
+    this.perfDebug = this._isPerfDebugEnabled();
   }
 
   getScene() {
@@ -144,6 +147,7 @@ export class SceneManager {
   }
 
   async _loadCity() {
+    const cityLoadStart = performance.now();
     let gltf = null;
     try {
       gltf = await this._loadCityModelWithCandidates();
@@ -153,16 +157,21 @@ export class SceneManager {
       return;
     }
 
+    const postLoadStart = performance.now();
+
     const city = gltf.scene;
     city.scale.setScalar(40);
     city.position.set(0, 0, 0);
 
-    let meshCount = 0;
+    const meshNodes = [];
     city.traverse((node) => {
-      if (!node.isMesh || !node.geometry) {
-        return;
+      if (node.isMesh && node.geometry) {
+        meshNodes.push(node);
       }
+    });
 
+    let meshCount = 0;
+    for (const node of meshNodes) {
       meshCount += 1;
       node.castShadow = false;
       node.receiveShadow = true;
@@ -180,12 +189,29 @@ export class SceneManager {
       }
 
       this.collidableMeshes.push(node);
-    });
+
+      if ((meshCount % 40) === 0) {
+        await this._yieldToMainThread();
+      }
+    }
 
     this.cityRoot = city;
     this.scene.add(city);
 
+    const octreeStart = performance.now();
     this.worldOctree.fromGraphNode(city);
+
+    if (this.perfDebug) {
+      const now = performance.now();
+      console.info(
+        '[Perf] city load=%.1fms process=%.1fms octree=%.1fms meshes=%d total=%.1fms',
+        postLoadStart - cityLoadStart,
+        octreeStart - postLoadStart,
+        now - octreeStart,
+        meshCount,
+        now - cityLoadStart
+      );
+    }
   }
 
   async _loadCityModelWithCandidates() {
@@ -297,5 +323,18 @@ export class SceneManager {
           reject(error);
         });
     });
+  }
+
+  _isPerfDebugEnabled() {
+    if (typeof window === 'undefined' || !window.location) {
+      return false;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    return params.get('perfDebug') === '1';
+  }
+
+  _yieldToMainThread() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
   }
 }

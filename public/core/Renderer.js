@@ -28,7 +28,6 @@ export class RendererSystem {
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.physicallyCorrectLights = true;
-    this.renderer.useLegacyLights = false;
 
     this.pixelRatio = Math.min(window.devicePixelRatio || 1, this.options.maxPixelRatio);
     this.renderer.setPixelRatio(this.pixelRatio);

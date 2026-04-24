@@ -17852,6 +17852,162 @@
       return data;
     }
   };
+  var LineBasicMaterial = class extends Material {
+    constructor(parameters) {
+      super();
+      this.isLineBasicMaterial = true;
+      this.type = "LineBasicMaterial";
+      this.color = new Color(16777215);
+      this.map = null;
+      this.linewidth = 1;
+      this.linecap = "round";
+      this.linejoin = "round";
+      this.fog = true;
+      this.setValues(parameters);
+    }
+    copy(source) {
+      super.copy(source);
+      this.color.copy(source.color);
+      this.map = source.map;
+      this.linewidth = source.linewidth;
+      this.linecap = source.linecap;
+      this.linejoin = source.linejoin;
+      this.fog = source.fog;
+      return this;
+    }
+  };
+  var _start$1 = /* @__PURE__ */ new Vector3();
+  var _end$1 = /* @__PURE__ */ new Vector3();
+  var _inverseMatrix$1 = /* @__PURE__ */ new Matrix4();
+  var _ray$1 = /* @__PURE__ */ new Ray();
+  var _sphere$1 = /* @__PURE__ */ new Sphere();
+  var Line = class extends Object3D {
+    constructor(geometry = new BufferGeometry(), material = new LineBasicMaterial()) {
+      super();
+      this.isLine = true;
+      this.type = "Line";
+      this.geometry = geometry;
+      this.material = material;
+      this.updateMorphTargets();
+    }
+    copy(source, recursive) {
+      super.copy(source, recursive);
+      this.material = Array.isArray(source.material) ? source.material.slice() : source.material;
+      this.geometry = source.geometry;
+      return this;
+    }
+    computeLineDistances() {
+      const geometry = this.geometry;
+      if (geometry.index === null) {
+        const positionAttribute = geometry.attributes.position;
+        const lineDistances = [0];
+        for (let i = 1, l = positionAttribute.count; i < l; i++) {
+          _start$1.fromBufferAttribute(positionAttribute, i - 1);
+          _end$1.fromBufferAttribute(positionAttribute, i);
+          lineDistances[i] = lineDistances[i - 1];
+          lineDistances[i] += _start$1.distanceTo(_end$1);
+        }
+        geometry.setAttribute("lineDistance", new Float32BufferAttribute(lineDistances, 1));
+      } else {
+        console.warn("THREE.Line.computeLineDistances(): Computation only possible with non-indexed BufferGeometry.");
+      }
+      return this;
+    }
+    raycast(raycaster, intersects) {
+      const geometry = this.geometry;
+      const matrixWorld = this.matrixWorld;
+      const threshold = raycaster.params.Line.threshold;
+      const drawRange = geometry.drawRange;
+      if (geometry.boundingSphere === null) geometry.computeBoundingSphere();
+      _sphere$1.copy(geometry.boundingSphere);
+      _sphere$1.applyMatrix4(matrixWorld);
+      _sphere$1.radius += threshold;
+      if (raycaster.ray.intersectsSphere(_sphere$1) === false) return;
+      _inverseMatrix$1.copy(matrixWorld).invert();
+      _ray$1.copy(raycaster.ray).applyMatrix4(_inverseMatrix$1);
+      const localThreshold = threshold / ((this.scale.x + this.scale.y + this.scale.z) / 3);
+      const localThresholdSq = localThreshold * localThreshold;
+      const vStart = new Vector3();
+      const vEnd = new Vector3();
+      const interSegment = new Vector3();
+      const interRay = new Vector3();
+      const step = this.isLineSegments ? 2 : 1;
+      const index = geometry.index;
+      const attributes = geometry.attributes;
+      const positionAttribute = attributes.position;
+      if (index !== null) {
+        const start = Math.max(0, drawRange.start);
+        const end = Math.min(index.count, drawRange.start + drawRange.count);
+        for (let i = start, l = end - 1; i < l; i += step) {
+          const a = index.getX(i);
+          const b = index.getX(i + 1);
+          vStart.fromBufferAttribute(positionAttribute, a);
+          vEnd.fromBufferAttribute(positionAttribute, b);
+          const distSq = _ray$1.distanceSqToSegment(vStart, vEnd, interRay, interSegment);
+          if (distSq > localThresholdSq) continue;
+          interRay.applyMatrix4(this.matrixWorld);
+          const distance = raycaster.ray.origin.distanceTo(interRay);
+          if (distance < raycaster.near || distance > raycaster.far) continue;
+          intersects.push({
+            distance,
+            // What do we want? intersection point on the ray or on the segment??
+            // point: raycaster.ray.at( distance ),
+            point: interSegment.clone().applyMatrix4(this.matrixWorld),
+            index: i,
+            face: null,
+            faceIndex: null,
+            object: this
+          });
+        }
+      } else {
+        const start = Math.max(0, drawRange.start);
+        const end = Math.min(positionAttribute.count, drawRange.start + drawRange.count);
+        for (let i = start, l = end - 1; i < l; i += step) {
+          vStart.fromBufferAttribute(positionAttribute, i);
+          vEnd.fromBufferAttribute(positionAttribute, i + 1);
+          const distSq = _ray$1.distanceSqToSegment(vStart, vEnd, interRay, interSegment);
+          if (distSq > localThresholdSq) continue;
+          interRay.applyMatrix4(this.matrixWorld);
+          const distance = raycaster.ray.origin.distanceTo(interRay);
+          if (distance < raycaster.near || distance > raycaster.far) continue;
+          intersects.push({
+            distance,
+            // What do we want? intersection point on the ray or on the segment??
+            // point: raycaster.ray.at( distance ),
+            point: interSegment.clone().applyMatrix4(this.matrixWorld),
+            index: i,
+            face: null,
+            faceIndex: null,
+            object: this
+          });
+        }
+      }
+    }
+    updateMorphTargets() {
+      const geometry = this.geometry;
+      const morphAttributes = geometry.morphAttributes;
+      const keys = Object.keys(morphAttributes);
+      if (keys.length > 0) {
+        const morphAttribute = morphAttributes[keys[0]];
+        if (morphAttribute !== void 0) {
+          this.morphTargetInfluences = [];
+          this.morphTargetDictionary = {};
+          for (let m = 0, ml = morphAttribute.length; m < ml; m++) {
+            const name = morphAttribute[m].name || String(m);
+            this.morphTargetInfluences.push(0);
+            this.morphTargetDictionary[name] = m;
+          }
+        }
+      }
+    }
+  };
+  var LineLoop = class extends Line {
+    constructor(geometry, material) {
+      super(geometry, material);
+      this.isLineLoop = true;
+      this.type = "LineLoop";
+    }
+  };
   var CanvasTexture = class extends Texture {
     constructor(canvas, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy) {
       super(canvas, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy);
@@ -40036,7 +40192,7 @@
       this.dispatchEvent({ type: "dispose" });
     }
   };
-  var LineBasicMaterial = class extends Material2 {
+  var LineBasicMaterial2 = class extends Material2 {
     constructor(parameters) {
       super();
       this.isLineBasicMaterial = true;
@@ -40060,13 +40216,13 @@
       return this;
     }
   };
-  var _start$1 = /* @__PURE__ */ new Vector32();
-  var _end$1 = /* @__PURE__ */ new Vector32();
-  var _inverseMatrix$1 = /* @__PURE__ */ new Matrix42();
-  var _ray$1 = /* @__PURE__ */ new Ray2();
-  var _sphere$1 = /* @__PURE__ */ new Sphere2();
-  var Line = class extends Object3D2 {
-    constructor(geometry = new BufferGeometry2(), material = new LineBasicMaterial()) {
+  var _start$12 = /* @__PURE__ */ new Vector32();
+  var _end$12 = /* @__PURE__ */ new Vector32();
+  var _inverseMatrix$12 = /* @__PURE__ */ new Matrix42();
+  var _ray$12 = /* @__PURE__ */ new Ray2();
+  var _sphere$12 = /* @__PURE__ */ new Sphere2();
+  var Line2 = class extends Object3D2 {
+    constructor(geometry = new BufferGeometry2(), material = new LineBasicMaterial2()) {
       super();
       this.isLine = true;
       this.type = "Line";
@@ -40086,10 +40242,10 @@
         const positionAttribute = geometry.attributes.position;
         const lineDistances = [0];
         for (let i = 1, l = positionAttribute.count; i < l; i++) {
-          _start$1.fromBufferAttribute(positionAttribute, i - 1);
-          _end$1.fromBufferAttribute(positionAttribute, i);
+          _start$12.fromBufferAttribute(positionAttribute, i - 1);
+          _end$12.fromBufferAttribute(positionAttribute, i);
           lineDistances[i] = lineDistances[i - 1];
-          lineDistances[i] += _start$1.distanceTo(_end$1);
+          lineDistances[i] += _start$12.distanceTo(_end$12);
         }
         geometry.setAttribute("lineDistance", new Float32BufferAttribute2(lineDistances, 1));
       } else {
@@ -40103,12 +40259,12 @@
       const threshold = raycaster.params.Line.threshold;
       const drawRange = geometry.drawRange;
       if (geometry.boundingSphere === null) geometry.computeBoundingSphere();
-      _sphere$1.copy(geometry.boundingSphere);
-      _sphere$1.applyMatrix4(matrixWorld);
-      _sphere$1.radius += threshold;
-      if (raycaster.ray.intersectsSphere(_sphere$1) === false) return;
-      _inverseMatrix$1.copy(matrixWorld).invert();
-      _ray$1.copy(raycaster.ray).applyMatrix4(_inverseMatrix$1);
+      _sphere$12.copy(geometry.boundingSphere);
+      _sphere$12.applyMatrix4(matrixWorld);
+      _sphere$12.radius += threshold;
+      if (raycaster.ray.intersectsSphere(_sphere$12) === false) return;
+      _inverseMatrix$12.copy(matrixWorld).invert();
+      _ray$12.copy(raycaster.ray).applyMatrix4(_inverseMatrix$12);
       const localThreshold = threshold / ((this.scale.x + this.scale.y + this.scale.z) / 3);
       const localThresholdSq = localThreshold * localThreshold;
       const vStart = new Vector32();
@@ -40127,7 +40283,7 @@
           const b = index.getX(i + 1);
           vStart.fromBufferAttribute(positionAttribute, a);
           vEnd.fromBufferAttribute(positionAttribute, b);
-          const distSq = _ray$1.distanceSqToSegment(vStart, vEnd, interRay, interSegment);
+          const distSq = _ray$12.distanceSqToSegment(vStart, vEnd, interRay, interSegment);
           if (distSq > localThresholdSq) continue;
           interRay.applyMatrix4(this.matrixWorld);
           const distance = raycaster.ray.origin.distanceTo(interRay);
@@ -40149,7 +40305,7 @@
         for (let i = start, l = end - 1; i < l; i += step) {
           vStart.fromBufferAttribute(positionAttribute, i);
           vEnd.fromBufferAttribute(positionAttribute, i + 1);
-          const distSq = _ray$1.distanceSqToSegment(vStart, vEnd, interRay, interSegment);
+          const distSq = _ray$12.distanceSqToSegment(vStart, vEnd, interRay, interSegment);
           if (distSq > localThresholdSq) continue;
           interRay.applyMatrix4(this.matrixWorld);
           const distance = raycaster.ray.origin.distanceTo(interRay);
@@ -40187,7 +40343,7 @@
   };
   var _start = /* @__PURE__ */ new Vector32();
   var _end = /* @__PURE__ */ new Vector32();
-  var LineSegments = class extends Line {
+  var LineSegments = class extends Line2 {
     constructor(geometry, material) {
       super(geometry, material);
       this.isLineSegments = true;
@@ -40211,7 +40367,7 @@
       return this;
     }
   };
-  var LineLoop = class extends Line {
+  var LineLoop2 = class extends Line2 {
     constructor(geometry, material) {
       super(geometry, material);
       this.isLineLoop = true;
@@ -43620,7 +43776,6 @@
       this.renderer.toneMappingExposure = 1;
       this.renderer.outputColorSpace = SRGBColorSpace;
       this.renderer.physicallyCorrectLights = true;
-      this.renderer.useLegacyLights = false;
       this.pixelRatio = Math.min(window.devicePixelRatio || 1, this.options.maxPixelRatio);
       this.renderer.setPixelRatio(this.pixelRatio);
       this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -45501,7 +45656,7 @@
         const cacheKey = "LineBasicMaterial:" + material.uuid;
         let lineMaterial = this.cache.get(cacheKey);
         if (!lineMaterial) {
-          lineMaterial = new LineBasicMaterial();
+          lineMaterial = new LineBasicMaterial2();
           Material2.prototype.copy.call(lineMaterial, material);
           lineMaterial.color.copy(material.color);
           lineMaterial.map = material.map;
@@ -45705,9 +45860,9 @@
           } else if (primitive.mode === WEBGL_CONSTANTS.LINES) {
             mesh = new LineSegments(geometry, material);
           } else if (primitive.mode === WEBGL_CONSTANTS.LINE_STRIP) {
-            mesh = new Line(geometry, material);
+            mesh = new Line2(geometry, material);
           } else if (primitive.mode === WEBGL_CONSTANTS.LINE_LOOP) {
-            mesh = new LineLoop(geometry, material);
+            mesh = new LineLoop2(geometry, material);
           } else if (primitive.mode === WEBGL_CONSTANTS.POINTS) {
             mesh = new Points(geometry, material);
           } else {
@@ -46551,6 +46706,8 @@
 
   // public/core/SceneManager.js
   var CITY_MODEL_CANDIDATES = [
+    "City.glb",
+    "./City.glb",
     "../City.glb",
     "../../City.glb",
     "/City.glb"
@@ -46621,6 +46778,7 @@
         console.error(`Failed to load asset: ${url}`);
       };
       this.gltfLoader = new GLTFLoader(this.loadingManager);
+      this.perfDebug = this._isPerfDebugEnabled();
     }
     getScene() {
       return this.scene;
@@ -46666,6 +46824,7 @@
       this.scene.environment = null;
     }
     async _loadCity() {
+      const cityLoadStart = performance.now();
       let gltf = null;
       try {
         gltf = await this._loadCityModelWithCandidates();
@@ -46674,14 +46833,18 @@
         this._createFallbackCity();
         return;
       }
+      const postLoadStart = performance.now();
       const city = gltf.scene;
       city.scale.setScalar(40);
       city.position.set(0, 0, 0);
-      let meshCount = 0;
+      const meshNodes = [];
       city.traverse((node) => {
-        if (!node.isMesh || !node.geometry) {
-          return;
+        if (node.isMesh && node.geometry) {
+          meshNodes.push(node);
         }
+      });
+      let meshCount = 0;
+      for (const node of meshNodes) {
         meshCount += 1;
         node.castShadow = false;
         node.receiveShadow = true;
@@ -46696,10 +46859,25 @@
           node.geometry.computeVertexNormals();
         }
         this.collidableMeshes.push(node);
-      });
+        if (meshCount % 40 === 0) {
+          await this._yieldToMainThread();
+        }
+      }
       this.cityRoot = city;
       this.scene.add(city);
+      const octreeStart = performance.now();
       this.worldOctree.fromGraphNode(city);
+      if (this.perfDebug) {
+        const now3 = performance.now();
+        console.info(
+          "[Perf] city load=%.1fms process=%.1fms octree=%.1fms meshes=%d total=%.1fms",
+          postLoadStart - cityLoadStart,
+          octreeStart - postLoadStart,
+          now3 - octreeStart,
+          meshCount,
+          now3 - cityLoadStart
+        );
+      }
     }
     async _loadCityModelWithCandidates() {
       const errors = [];
@@ -46794,6 +46972,16 @@
           reject(error);
         });
       });
+    }
+    _isPerfDebugEnabled() {
+      if (typeof window === "undefined" || !window.location) {
+        return false;
+      }
+      const params = new URLSearchParams(window.location.search);
+      return params.get("perfDebug") === "1";
+    }
+    _yieldToMainThread() {
+      return new Promise((resolve) => setTimeout(resolve, 0));
     }
   };
 
@@ -47020,6 +47208,8 @@
   var PLAYABLE_STATES = ["idle", "walk", "run", "jump"];
   var QUARTER_TURN = Math.PI * 0.5;
   var PLAYER_MODEL_CANDIDATES = [
+    "models/idkbro.glb",
+    "./models/idkbro.glb",
     "../models/idkbro.glb",
     "../../models/idkbro.glb",
     "/models/idkbro.glb"
@@ -47349,36 +47539,52 @@
       }
     }
     _resolveAnimationClips(clips) {
-      const exact = /* @__PURE__ */ new Map();
-      const normalized = /* @__PURE__ */ new Map();
+      const candidates = {
+        idle: [],
+        walk: [],
+        run: [],
+        jump: []
+      };
       for (const clip of clips) {
         if (!this._isUsableClip(clip)) {
           continue;
         }
         const { full, base } = this._normalizeClipName(clip.name);
-        for (const stateName of PLAYABLE_STATES) {
-          if (full === stateName && !exact.has(stateName)) {
-            exact.set(stateName, clip);
-          }
+        if (base === "idle" || base.startsWith("idle")) {
+          candidates.idle.push({ clip, full });
         }
-        if (!normalized.has("idle") && (base === "idle" || base.startsWith("idle"))) {
-          normalized.set("idle", clip);
+        if (base === "walk" || base === "walking" || base.startsWith("walk")) {
+          candidates.walk.push({ clip, full });
         }
-        if (!normalized.has("walk") && (base === "walk" || base === "walking" || base.startsWith("walk"))) {
-          normalized.set("walk", clip);
+        if (base === "run" || base === "running" || base.startsWith("run")) {
+          candidates.run.push({ clip, full });
         }
-        if (!normalized.has("run") && (base === "run" || base === "running" || base.startsWith("run"))) {
-          normalized.set("run", clip);
-        }
-        if (!normalized.has("jump") && (base === "jump" || /^jump(\.|_|$)/.test(base)) && !base.startsWith("jump_start") && !base.startsWith("jump_air") && !base.startsWith("jump_land")) {
-          normalized.set("jump", clip);
+        if ((base === "jump" || /^jump(\.|_|$)/.test(base)) && !base.startsWith("jump_start") && !base.startsWith("jump_air") && !base.startsWith("jump_land")) {
+          candidates.jump.push({ clip, full });
         }
       }
+      const pick = (stateName) => {
+        const list = candidates[stateName];
+        if (!list || list.length === 0) {
+          return null;
+        }
+        const exactState = list.find((entry) => entry.full === stateName);
+        if (exactState) {
+          return exactState.clip;
+        }
+        if (stateName === "walk") {
+          const preferredWalk = list.find((entry) => entry.full === "walk.002" || entry.full === "walk_002");
+          if (preferredWalk) {
+            return preferredWalk.clip;
+          }
+        }
+        return list[0].clip;
+      };
       return {
-        idle: exact.get("idle") || normalized.get("idle") || null,
-        walk: exact.get("walk") || normalized.get("walk") || null,
-        run: exact.get("run") || normalized.get("run") || null,
-        jump: exact.get("jump") || normalized.get("jump") || null
+        idle: pick("idle"),
+        walk: pick("walk"),
+        run: pick("run"),
+        jump: pick("jump")
       };
     }
     _normalizeClipName(name) {
@@ -47516,6 +47722,17 @@
       this.localPlayer.rotation.y = damp3(this.localPlayer.rotation.y, this.targetRotation, 14, deltaSeconds);
     }
     _resolveAnimationState(input) {
+      if (this.currentState === "jump" && this.currentAction && this.currentAction.isRunning() === false && input.onGround) {
+        this.jumpLockActive = false;
+        this.groundedFrameStreak = 0;
+        if (input.sprintingForward) {
+          return "run";
+        }
+        if (input.moving) {
+          return "walk";
+        }
+        return "idle";
+      }
       if (input.justJumped || this.jumpLockActive) {
         return "jump";
       }
@@ -47688,13 +47905,22 @@
       this.onGround = false;
       this.airborneTime = 0;
       this.jumpGraceSeconds = 0.12;
+      this.jumpBufferSeconds = 0.14;
+      this.jumpBufferTimer = 0;
+      this.coyoteTimeSeconds = 0.12;
+      this.coyoteTimer = 0;
+      this.idleCollisionSkipCounter = 0;
+      this.idleCollisionSkipEvery = 2;
       this._bindInput();
     }
     setEnabled(enabled) {
       this.enabled = enabled;
       if (!enabled) {
         this.resetInputs();
-        this.ahorizontalVelocity.set(0, 0, 0);
+        this.horizontalVelocity.set(0, 0, 0);
+        this.verticalVelocity = 0;
+        this.jumpBufferTimer = 0;
+        this.coyoteTimer = 0;
         this.airborneTime = 0;
       }
     }
@@ -47705,6 +47931,7 @@
       this.input.right = false;
       this.input.run = false;
       this.input.jumpQueued = false;
+      this.jumpBufferTimer = 0;
     }
     syncColliderFromPlayer(playerObject) {
       const position = playerObject.position;
@@ -47717,6 +47944,14 @@
       }
       const dt = clamp3(deltaSeconds, 0, 0.05);
       this.syncColliderFromPlayer(playerObject);
+      if (this.jumpBufferTimer > 0) {
+        this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
+      }
+      if (this.onGround) {
+        this.coyoteTimer = this.coyoteTimeSeconds;
+      } else {
+        this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
+      }
       if (!this.enabled) {
         return this._applyPassivePhysics(playerObject, dt);
       }
@@ -47725,19 +47960,25 @@
       if (this.input.back) this.tempDirection.sub(movementBasis.forward);
       if (this.input.right) this.tempDirection.add(movementBasis.right);
       if (this.input.left) this.tempDirection.sub(movementBasis.right);
-      if (this.tempDirection.lengthSq() > 1e-4) {
+      const hasMoveInput = this.tempDirection.lengthSq() > 1e-4;
+      if (hasMoveInput) {
         this.tempDirection.normalize();
       }
-      const sprintingForward = this.input.run && this.input.forward && !this.input.back;
-      const targetSpeed = sprintingForward ? this.runSpeed : this.walkSpeed;
+      const sprinting = this.input.run && hasMoveInput;
+      const targetSpeed = sprinting ? this.runSpeed : this.walkSpeed;
       this.tempTargetVelocity.copy(this.tempDirection).multiplyScalar(targetSpeed);
       const accel = this.tempDirection.lengthSq() > 0 ? this.acceleration : this.deceleration;
       this.horizontalVelocity.x = damp3(this.horizontalVelocity.x, this.tempTargetVelocity.x, accel, dt);
       this.horizontalVelocity.z = damp3(this.horizontalVelocity.z, this.tempTargetVelocity.z, accel, dt);
       let justJumped = false;
-      if (this.onGround && this.input.jumpQueued) {
+      if (this.input.jumpQueued) {
+        this.jumpBufferTimer = this.jumpBufferSeconds;
+      }
+      if (this.jumpBufferTimer > 0 && (this.onGround || this.coyoteTimer > 0)) {
         this.verticalVelocity = this.jumpSpeed;
         this.onGround = false;
+        this.coyoteTimer = 0;
+        this.jumpBufferTimer = 0;
         justJumped = true;
       }
       this.input.jumpQueued = false;
@@ -47751,8 +47992,14 @@
       );
       this.playerCollider.translate(this.tempMove);
       if (this.worldOctree) {
-        const collisionResult = this.worldOctree.capsuleIntersect(this.playerCollider);
-        this.onGround = false;
+        const movingPlanar = this.horizontalVelocity.lengthSq() > 4e-4;
+        const movingVertical = Math.abs(this.verticalVelocity) > 0.05;
+        const shouldSkipCollision = this.onGround && !movingPlanar && !movingVertical && this.idleCollisionSkipCounter++ % this.idleCollisionSkipEvery !== 0;
+        if (!shouldSkipCollision) {
+          this.idleCollisionSkipCounter = 0;
+        }
+        const collisionResult = shouldSkipCollision ? null : this.worldOctree.capsuleIntersect(this.playerCollider);
+        this.onGround = shouldSkipCollision ? this.onGround : false;
         if (collisionResult) {
           this.playerCollider.translate(collisionResult.normal.multiplyScalar(collisionResult.depth));
           if (collisionResult.normal.y > 0.25) {
@@ -47779,8 +48026,8 @@
       );
       return {
         moving: planarSpeed > 0.3,
-        running: sprintingForward && planarSpeed > this.walkSpeed + 0.6,
-        sprintingForward,
+        running: sprinting && planarSpeed > this.walkSpeed + 0.6,
+        sprintingForward: sprinting,
         jumping: this.airborneTime > this.jumpGraceSeconds,
         justJumped,
         onGround: this.onGround,
@@ -47857,6 +48104,7 @@
           case "Space":
             if (!event.repeat) {
               this.input.jumpQueued = true;
+              this.jumpBufferTimer = this.jumpBufferSeconds;
             }
             break;
           default:
@@ -48761,7 +49009,7 @@
   };
 
   // public/vendor/three/examples/jsm/lines/Line2.js
-  var Line2 = class extends LineSegments2 {
+  var Line22 = class extends LineSegments2 {
     constructor(geometry = new LineGeometry(), material = new LineMaterial({ color: Math.random() * 16777215 })) {
       super(geometry, material);
       this.isLine2 = true;
@@ -48868,7 +49116,7 @@
       this.minDistanceBetweenPoints = 0.03;
       this.simplificationEpsilon = 0.02;
       this.maxLiveStrokesPerPatch = 48;
-      this.bakeBatchSize = 20;
+      this.bakeBatchSize = 5;
       this.drawMode = false;
       this.pointerDown = false;
       this.activePointerId = null;
@@ -48883,6 +49131,16 @@
       this.playerDrawOriginOffset = new Vector3(0, 1.2, 0);
       this.tempPlayerOrigin = new Vector3();
       this.wallScanAccumulator = 0;
+      this.wallScanIntervalSeconds = 0.08;
+      this.lastScanCameraPos = new Vector3();
+      this.lastScanCameraQuat = new Quaternion();
+      this.lastScanHadState = false;
+      this.pointerDirtySinceScan = false;
+      this.cameraMoveThresholdSq = 25e-4;
+      this.cameraAngleThreshold = 0.01;
+      this.lastPointerMoveProcessMs = 0;
+      this.pointerMoveMinIntervalMs = 8;
+      this.activeStrokePositionsBuffer = null;
       this.patches = /* @__PURE__ */ new Map();
       this.strokeIndex = /* @__PURE__ */ new Map();
       this.seenStrokeIds = /* @__PURE__ */ new Set();
@@ -48893,6 +49151,8 @@
       this.hasPointer = false;
       this.previewMesh = this._createPreviewMesh();
       this.scene.add(this.previewMesh);
+      this.drawBoundaryMesh = this._createDrawBoundaryMesh();
+      this.scene.add(this.drawBoundaryMesh);
       this.viewportWidth = window.innerWidth;
       this.viewportHeight = window.innerHeight;
       this.rendererSystem.onResize((width, height) => {
@@ -48923,20 +49183,28 @@
         return;
       }
       this.wallScanAccumulator += deltaSeconds;
-      if (this.wallScanAccumulator < 0.03) {
+      if (this.wallScanAccumulator < this.wallScanIntervalSeconds) {
+        return;
+      }
+      if (!this._shouldRunWallScan()) {
         return;
       }
       this.wallScanAccumulator = 0;
       const hit = this._findWallInFront() || this._findWallAtPointer();
+      this._markScanState();
       if (!hit) {
         this.currentCandidate = null;
         this.previewMesh.visible = false;
+        if (!this.drawMode) {
+          this.drawBoundaryMesh.visible = false;
+        }
         this.uiManager.setDrawPrompt(false);
         return;
       }
       const descriptor = this._buildPatchDescriptor(hit);
       this.currentCandidate = descriptor;
       this._updatePreviewMesh(descriptor);
+      this._updateDrawBoundaryMesh(descriptor);
       this.uiManager.setDrawPrompt(true, "Wall in front - press E to paint");
     }
     applyInitialStrokes(strokes) {
@@ -49012,28 +49280,7 @@
         if (!this.drawMode || !this.pointerDown) {
           return;
         }
-        const localPoint = this._sampleLocalPointOnActivePatch();
-        if (!localPoint) {
-          return;
-        }
-        if (this.uiManager.getTool() === "erase") {
-          this._clearActiveStrokeRenderable();
-          this._eraseAtPoint(localPoint);
-          return;
-        }
-        this.activePreviewPoint = localPoint;
-        this._updateActiveStrokeRenderable();
-        if (!this.lastPaintPoint) {
-          return;
-        }
-        const dx = localPoint.x - this.lastPaintPoint.x;
-        const dy = localPoint.y - this.lastPaintPoint.y;
-        if (dx * dx + dy * dy >= this.minDistanceBetweenPoints * this.minDistanceBetweenPoints) {
-          this.activeStroke.push(localPoint);
-          this.lastPaintPoint = localPoint;
-          this.activePreviewPoint = localPoint;
-          this._updateActiveStrokeRenderable();
-        }
+        this._processPointerMoveDraw();
       });
       const finalizeStroke = () => {
         if (!this.drawMode || !this.pointerDown) {
@@ -49113,6 +49360,7 @@
       this.activePreviewPoint = null;
       this._clearActiveStrokeRenderable();
       this.previewMesh.visible = false;
+      this._updateDrawBoundaryMesh(this.activePatch);
       this.uiManager.setDrawMode(true);
       this.uiManager.setDrawPrompt(true, "Drawing mode - hold mouse to paint, Esc to exit");
     }
@@ -49125,8 +49373,53 @@
       this.lastPaintPoint = null;
       this.activePreviewPoint = null;
       this._clearActiveStrokeRenderable();
+      this.previewMesh.visible = false;
+      this.drawBoundaryMesh.visible = false;
       this.uiManager.setDrawMode(false);
       this.uiManager.setDrawPrompt(false);
+    }
+    _processPointerMoveDraw() {
+      const now3 = performance.now();
+      if (now3 - this.lastPointerMoveProcessMs < this.pointerMoveMinIntervalMs) {
+        return;
+      }
+      this.lastPointerMoveProcessMs = now3;
+      const localPoint = this._sampleLocalPointOnActivePatch();
+      if (!localPoint) {
+        return;
+      }
+      if (this.uiManager.getTool() === "erase") {
+        this._clearActiveStrokeRenderable();
+        this._eraseAtPoint(localPoint);
+        return;
+      }
+      this.activePreviewPoint = localPoint;
+      this._updateActiveStrokeRenderable();
+      if (!this.lastPaintPoint) {
+        return;
+      }
+      const dx = localPoint.x - this.lastPaintPoint.x;
+      const dy = localPoint.y - this.lastPaintPoint.y;
+      if (dx * dx + dy * dy >= this.minDistanceBetweenPoints * this.minDistanceBetweenPoints) {
+        this.activeStroke.push(localPoint);
+        this.lastPaintPoint = localPoint;
+        this.activePreviewPoint = localPoint;
+        this._updateActiveStrokeRenderable();
+      }
+    }
+    _shouldRunWallScan() {
+      if (!this.lastScanHadState) {
+        return true;
+      }
+      const movedEnough = this.camera.position.distanceToSquared(this.lastScanCameraPos) > this.cameraMoveThresholdSq;
+      const turnedEnough = this.camera.quaternion.angleTo(this.lastScanCameraQuat) > this.cameraAngleThreshold;
+      return movedEnough || turnedEnough || this.pointerDirtySinceScan;
+    }
+    _markScanState() {
+      this.lastScanCameraPos.copy(this.camera.position);
+      this.lastScanCameraQuat.copy(this.camera.quaternion);
+      this.lastScanHadState = true;
+      this.pointerDirtySinceScan = false;
     }
     _findWallAtPointer() {
       if (!this.hasPointer) {
@@ -49266,7 +49559,11 @@
         this._clearActiveStrokeRenderable();
         return;
       }
-      const positions = new Float32Array((this.activeStroke.length + 1) * 3);
+      const requiredLength = (this.activeStroke.length + 1) * 3;
+      if (!this.activeStrokePositionsBuffer || this.activeStrokePositionsBuffer.length < requiredLength) {
+        this.activeStrokePositionsBuffer = new Float32Array(requiredLength);
+      }
+      const positions = this.activeStrokePositionsBuffer;
       for (let i = 0; i < this.activeStroke.length; i += 1) {
         const point = this.activeStroke[i];
         this._localToWorld(this.activePatch, point, this.tempWorldPoint);
@@ -49293,7 +49590,7 @@
           polygonOffsetFactor: -2
         });
         material.resolution.set(this.viewportWidth, this.viewportHeight);
-        this.activeStrokeRenderable = new Line2(geometry, material);
+        this.activeStrokeRenderable = new Line22(geometry, material);
         this.activeStrokeRenderable.renderOrder = 2;
         this.activeStrokeRenderable.frustumCulled = true;
         this.activeStrokePatchKey = this.activePatch.key;
@@ -49308,7 +49605,7 @@
           liveMaterial.linewidth = clamp3(this.uiManager.getBrushSize(), 1, 24);
         }
       }
-      this.activeStrokeRenderable.geometry.setPositions(positions);
+      this.activeStrokeRenderable.geometry.setPositions(positions.subarray(0, requiredLength));
       this.activeStrokeRenderable.computeLineDistances();
     }
     _createInitialPreviewPoint(localPoint) {
@@ -49347,6 +49644,7 @@
       }
       this.activeStrokeRenderable = null;
       this.activeStrokePatchKey = null;
+      this.activeStrokePositionsBuffer = null;
     }
     _attachStrokeRenderable(patch, stroke) {
       const positions = new Float32Array(stroke.points.length * 3);
@@ -49370,7 +49668,7 @@
         polygonOffsetFactor: -2
       });
       material.resolution.set(this.viewportWidth, this.viewportHeight);
-      const line = new Line2(geometry, material);
+      const line = new Line22(geometry, material);
       line.computeLineDistances();
       line.renderOrder = 2;
       line.frustumCulled = true;
@@ -49558,6 +49856,7 @@
       this.pointerNdc.x = (event.clientX - rect.left) / rect.width * 2 - 1;
       this.pointerNdc.y = -((event.clientY - rect.top) / rect.height * 2 - 1);
       this.hasPointer = true;
+      this.pointerDirtySinceScan = true;
     }
     _createPreviewMesh() {
       const material = new MeshBasicMaterial({
@@ -49573,11 +49872,49 @@
       mesh.renderOrder = 3;
       return mesh;
     }
+    _createDrawBoundaryMesh() {
+      const half = this.patchHalfSize;
+      const geometry = new BufferGeometry();
+      geometry.setAttribute("position", new Float32BufferAttribute([
+        -half,
+        -half,
+        0,
+        half,
+        -half,
+        0,
+        half,
+        half,
+        0,
+        -half,
+        half,
+        0
+      ], 3));
+      const material = new LineBasicMaterial({
+        color: 3928831,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false
+      });
+      const loop = new LineLoop(geometry, material);
+      loop.visible = false;
+      loop.renderOrder = 4;
+      return loop;
+    }
     _updatePreviewMesh(descriptor) {
       this.tempBasisMatrix.makeBasis(descriptor.tangent, descriptor.bitangent, descriptor.normal);
       this.previewMesh.quaternion.setFromRotationMatrix(this.tempBasisMatrix);
       this.previewMesh.position.copy(descriptor.center).addScaledVector(descriptor.normal, this.surfaceOffset * 0.8);
       this.previewMesh.visible = true;
+    }
+    _updateDrawBoundaryMesh(descriptor) {
+      if (!descriptor) {
+        this.drawBoundaryMesh.visible = false;
+        return;
+      }
+      this.tempBasisMatrix.makeBasis(descriptor.tangent, descriptor.bitangent, descriptor.normal);
+      this.drawBoundaryMesh.quaternion.setFromRotationMatrix(this.tempBasisMatrix);
+      this.drawBoundaryMesh.position.copy(descriptor.center).addScaledVector(descriptor.normal, this.surfaceOffset * 1.05);
+      this.drawBoundaryMesh.visible = true;
     }
     _nextStrokeId() {
       this.strokeCounter += 1;
@@ -49647,6 +49984,9 @@
       }
     }
     async _getIoFactory() {
+      if (!this.socketUrl && this._isGithubPagesHost()) {
+        return null;
+      }
       if (typeof globalThis.io === "function") {
         return globalThis.io;
       }
@@ -49696,6 +50036,10 @@
       } catch {
         return "/socket.io/socket.io.js";
       }
+    }
+    _isGithubPagesHost() {
+      const hostname = globalThis?.location?.hostname;
+      return typeof hostname === "string" && hostname.endsWith(".github.io");
     }
     _normalizeBaseUrl(value) {
       if (typeof value !== "string") {
@@ -50260,7 +50604,9 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       timings.total = performance.now() - frameStart;
       this.lastMovementState = movementState || this._createEmptyMovementState();
       const rawDeltaMs = rawDelta * 1e3;
-      const hitch = rawDeltaMs > this.debugHitchDeltaThresholdMs || timings.total > this.debugHitchFrameThresholdMs;
+      const visibilityHidden = typeof document !== "undefined" && document.hidden === true;
+      const rawDeltaLooksLikeSchedulerStall = rawDeltaMs > this.debugHitchDeltaThresholdMs && timings.total < this.debugHitchFrameThresholdMs * 0.5 && (visibilityHidden || rawDeltaMs > 1e3);
+      const hitch = timings.total > this.debugHitchFrameThresholdMs || rawDeltaMs > this.debugHitchDeltaThresholdMs && !rawDeltaLooksLikeSchedulerStall;
       const frameSnapshot = {
         timestamp: Date.now(),
         rawDeltaMs,

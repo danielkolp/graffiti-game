@@ -39,7 +39,7 @@ export class DrawingSystem {
     this.minDistanceBetweenPoints = 0.03;
     this.simplificationEpsilon = 0.02;
     this.maxLiveStrokesPerPatch = 48;
-    this.bakeBatchSize = 20;
+    this.bakeBatchSize = 5;
 
     this.drawMode = false;
     this.pointerDown = false;
@@ -56,6 +56,18 @@ export class DrawingSystem {
     this.tempPlayerOrigin = new THREE.Vector3();
 
     this.wallScanAccumulator = 0;
+    this.wallScanIntervalSeconds = 0.08;
+    this.lastScanCameraPos = new THREE.Vector3();
+    this.lastScanCameraQuat = new THREE.Quaternion();
+    this.lastScanHadState = false;
+    this.pointerDirtySinceScan = false;
+    this.cameraMoveThresholdSq = 0.0025;
+    this.cameraAngleThreshold = 0.01;
+
+    this.lastPointerMoveProcessMs = 0;
+    this.pointerMoveMinIntervalMs = 8;
+
+    this.activeStrokePositionsBuffer = null;
 
     this.patches = new Map();
     this.strokeIndex = new Map();
@@ -68,6 +80,9 @@ export class DrawingSystem {
 
     this.previewMesh = this._createPreviewMesh();
     this.scene.add(this.previewMesh);
+
+    this.drawBoundaryMesh = this._createDrawBoundaryMesh();
+    this.scene.add(this.drawBoundaryMesh);
 
     this.viewportWidth = window.innerWidth;
     this.viewportHeight = window.innerHeight;
@@ -105,15 +120,24 @@ export class DrawingSystem {
     }
 
     this.wallScanAccumulator += deltaSeconds;
-    if (this.wallScanAccumulator < 0.03) {
+    if (this.wallScanAccumulator < this.wallScanIntervalSeconds) {
       return;
     }
+
+    if (!this._shouldRunWallScan()) {
+      return;
+    }
+
     this.wallScanAccumulator = 0;
 
     const hit = this._findWallInFront() || this._findWallAtPointer();
+    this._markScanState();
     if (!hit) {
       this.currentCandidate = null;
       this.previewMesh.visible = false;
+      if (!this.drawMode) {
+        this.drawBoundaryMesh.visible = false;
+      }
       this.uiManager.setDrawPrompt(false);
       return;
     }
@@ -121,6 +145,7 @@ export class DrawingSystem {
     const descriptor = this._buildPatchDescriptor(hit);
     this.currentCandidate = descriptor;
     this._updatePreviewMesh(descriptor);
+    this._updateDrawBoundaryMesh(descriptor);
     this.uiManager.setDrawPrompt(true, 'Wall in front - press E to paint');
   }
 
@@ -216,32 +241,7 @@ export class DrawingSystem {
         return;
       }
 
-      const localPoint = this._sampleLocalPointOnActivePatch();
-      if (!localPoint) {
-        return;
-      }
-
-      if (this.uiManager.getTool() === 'erase') {
-        this._clearActiveStrokeRenderable();
-        this._eraseAtPoint(localPoint);
-        return;
-      }
-
-      this.activePreviewPoint = localPoint;
-      this._updateActiveStrokeRenderable();
-
-      if (!this.lastPaintPoint) {
-        return;
-      }
-
-      const dx = localPoint.x - this.lastPaintPoint.x;
-      const dy = localPoint.y - this.lastPaintPoint.y;
-      if ((dx * dx) + (dy * dy) >= (this.minDistanceBetweenPoints * this.minDistanceBetweenPoints)) {
-        this.activeStroke.push(localPoint);
-        this.lastPaintPoint = localPoint;
-        this.activePreviewPoint = localPoint;
-        this._updateActiveStrokeRenderable();
-      }
+      this._processPointerMoveDraw();
     });
 
     const finalizeStroke = () => {
@@ -336,6 +336,7 @@ export class DrawingSystem {
     this.activePreviewPoint = null;
     this._clearActiveStrokeRenderable();
     this.previewMesh.visible = false;
+    this._updateDrawBoundaryMesh(this.activePatch);
     this.uiManager.setDrawMode(true);
     this.uiManager.setDrawPrompt(true, 'Drawing mode - hold mouse to paint, Esc to exit');
   }
@@ -349,8 +350,62 @@ export class DrawingSystem {
     this.lastPaintPoint = null;
     this.activePreviewPoint = null;
     this._clearActiveStrokeRenderable();
+    this.previewMesh.visible = false;
+    this.drawBoundaryMesh.visible = false;
     this.uiManager.setDrawMode(false);
     this.uiManager.setDrawPrompt(false);
+  }
+
+  _processPointerMoveDraw() {
+    const now = performance.now();
+    if ((now - this.lastPointerMoveProcessMs) < this.pointerMoveMinIntervalMs) {
+      return;
+    }
+    this.lastPointerMoveProcessMs = now;
+
+    const localPoint = this._sampleLocalPointOnActivePatch();
+    if (!localPoint) {
+      return;
+    }
+
+    if (this.uiManager.getTool() === 'erase') {
+      this._clearActiveStrokeRenderable();
+      this._eraseAtPoint(localPoint);
+      return;
+    }
+
+    this.activePreviewPoint = localPoint;
+    this._updateActiveStrokeRenderable();
+
+    if (!this.lastPaintPoint) {
+      return;
+    }
+
+    const dx = localPoint.x - this.lastPaintPoint.x;
+    const dy = localPoint.y - this.lastPaintPoint.y;
+    if ((dx * dx) + (dy * dy) >= (this.minDistanceBetweenPoints * this.minDistanceBetweenPoints)) {
+      this.activeStroke.push(localPoint);
+      this.lastPaintPoint = localPoint;
+      this.activePreviewPoint = localPoint;
+      this._updateActiveStrokeRenderable();
+    }
+  }
+
+  _shouldRunWallScan() {
+    if (!this.lastScanHadState) {
+      return true;
+    }
+
+    const movedEnough = this.camera.position.distanceToSquared(this.lastScanCameraPos) > this.cameraMoveThresholdSq;
+    const turnedEnough = this.camera.quaternion.angleTo(this.lastScanCameraQuat) > this.cameraAngleThreshold;
+    return movedEnough || turnedEnough || this.pointerDirtySinceScan;
+  }
+
+  _markScanState() {
+    this.lastScanCameraPos.copy(this.camera.position);
+    this.lastScanCameraQuat.copy(this.camera.quaternion);
+    this.lastScanHadState = true;
+    this.pointerDirtySinceScan = false;
   }
 
   _findWallAtPointer() {
@@ -532,7 +587,11 @@ export class DrawingSystem {
       return;
     }
 
-    const positions = new Float32Array((this.activeStroke.length + 1) * 3);
+    const requiredLength = (this.activeStroke.length + 1) * 3;
+    if (!this.activeStrokePositionsBuffer || this.activeStrokePositionsBuffer.length < requiredLength) {
+      this.activeStrokePositionsBuffer = new Float32Array(requiredLength);
+    }
+    const positions = this.activeStrokePositionsBuffer;
     for (let i = 0; i < this.activeStroke.length; i += 1) {
       const point = this.activeStroke[i];
       this._localToWorld(this.activePatch, point, this.tempWorldPoint);
@@ -580,7 +639,7 @@ export class DrawingSystem {
       }
     }
 
-    this.activeStrokeRenderable.geometry.setPositions(positions);
+    this.activeStrokeRenderable.geometry.setPositions(positions.subarray(0, requiredLength));
     this.activeStrokeRenderable.computeLineDistances();
   }
 
@@ -626,6 +685,7 @@ export class DrawingSystem {
 
     this.activeStrokeRenderable = null;
     this.activeStrokePatchKey = null;
+    this.activeStrokePositionsBuffer = null;
   }
 
   _attachStrokeRenderable(patch, stroke) {
@@ -880,6 +940,7 @@ export class DrawingSystem {
     this.pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointerNdc.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
     this.hasPointer = true;
+    this.pointerDirtySinceScan = true;
   }
 
   _createPreviewMesh() {
@@ -898,11 +959,46 @@ export class DrawingSystem {
     return mesh;
   }
 
+  _createDrawBoundaryMesh() {
+    const half = this.patchHalfSize;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+      -half, -half, 0,
+      half, -half, 0,
+      half, half, 0,
+      -half, half, 0
+    ], 3));
+
+    const material = new THREE.LineBasicMaterial({
+      color: 0x3bf2ff,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false
+    });
+
+    const loop = new THREE.LineLoop(geometry, material);
+    loop.visible = false;
+    loop.renderOrder = 4;
+    return loop;
+  }
+
   _updatePreviewMesh(descriptor) {
     this.tempBasisMatrix.makeBasis(descriptor.tangent, descriptor.bitangent, descriptor.normal);
     this.previewMesh.quaternion.setFromRotationMatrix(this.tempBasisMatrix);
     this.previewMesh.position.copy(descriptor.center).addScaledVector(descriptor.normal, this.surfaceOffset * 0.8);
     this.previewMesh.visible = true;
+  }
+
+  _updateDrawBoundaryMesh(descriptor) {
+    if (!descriptor) {
+      this.drawBoundaryMesh.visible = false;
+      return;
+    }
+
+    this.tempBasisMatrix.makeBasis(descriptor.tangent, descriptor.bitangent, descriptor.normal);
+    this.drawBoundaryMesh.quaternion.setFromRotationMatrix(this.tempBasisMatrix);
+    this.drawBoundaryMesh.position.copy(descriptor.center).addScaledVector(descriptor.normal, this.surfaceOffset * 1.05);
+    this.drawBoundaryMesh.visible = true;
   }
 
   _nextStrokeId() {

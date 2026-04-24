@@ -40,6 +40,12 @@ export class MovementSystem {
     this.onGround = false;
     this.airborneTime = 0;
     this.jumpGraceSeconds = 0.12;
+    this.jumpBufferSeconds = 0.14;
+    this.jumpBufferTimer = 0;
+    this.coyoteTimeSeconds = 0.12;
+    this.coyoteTimer = 0;
+    this.idleCollisionSkipCounter = 0;
+    this.idleCollisionSkipEvery = 2;
 
     this._bindInput();
   }
@@ -48,7 +54,10 @@ export class MovementSystem {
     this.enabled = enabled;
     if (!enabled) {
       this.resetInputs();
-      this.ahorizontalVelocity.set(0, 0, 0);
+      this.horizontalVelocity.set(0, 0, 0);
+      this.verticalVelocity = 0;
+      this.jumpBufferTimer = 0;
+      this.coyoteTimer = 0;
       this.airborneTime = 0;
     }
   }
@@ -60,6 +69,7 @@ export class MovementSystem {
     this.input.right = false;
     this.input.run = false;
     this.input.jumpQueued = false;
+    this.jumpBufferTimer = 0;
   }
 
   syncColliderFromPlayer(playerObject) {
@@ -76,6 +86,16 @@ export class MovementSystem {
     const dt = clamp(deltaSeconds, 0, 0.05);
     this.syncColliderFromPlayer(playerObject);
 
+    if (this.jumpBufferTimer > 0) {
+      this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
+    }
+
+    if (this.onGround) {
+      this.coyoteTimer = this.coyoteTimeSeconds;
+    } else {
+      this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
+    }
+
     if (!this.enabled) {
       return this._applyPassivePhysics(playerObject, dt);
     }
@@ -86,12 +106,13 @@ export class MovementSystem {
     if (this.input.right) this.tempDirection.add(movementBasis.right);
     if (this.input.left) this.tempDirection.sub(movementBasis.right);
 
-    if (this.tempDirection.lengthSq() > 0.0001) {
+    const hasMoveInput = this.tempDirection.lengthSq() > 0.0001;
+    if (hasMoveInput) {
       this.tempDirection.normalize();
     }
 
-    const sprintingForward = this.input.run && this.input.forward && !this.input.back;
-    const targetSpeed = sprintingForward ? this.runSpeed : this.walkSpeed;
+    const sprinting = this.input.run && hasMoveInput;
+    const targetSpeed = sprinting ? this.runSpeed : this.walkSpeed;
     this.tempTargetVelocity.copy(this.tempDirection).multiplyScalar(targetSpeed);
 
     const accel = this.tempDirection.lengthSq() > 0 ? this.acceleration : this.deceleration;
@@ -99,9 +120,14 @@ export class MovementSystem {
     this.horizontalVelocity.z = damp(this.horizontalVelocity.z, this.tempTargetVelocity.z, accel, dt);
 
     let justJumped = false;
-    if (this.onGround && this.input.jumpQueued) {
+    if (this.input.jumpQueued) {
+      this.jumpBufferTimer = this.jumpBufferSeconds;
+    }
+    if (this.jumpBufferTimer > 0 && (this.onGround || this.coyoteTimer > 0)) {
       this.verticalVelocity = this.jumpSpeed;
       this.onGround = false;
+      this.coyoteTimer = 0;
+      this.jumpBufferTimer = 0;
       justJumped = true;
     }
     this.input.jumpQueued = false;
@@ -119,8 +145,17 @@ export class MovementSystem {
     this.playerCollider.translate(this.tempMove);
 
     if (this.worldOctree) {
-      const collisionResult = this.worldOctree.capsuleIntersect(this.playerCollider);
-      this.onGround = false;
+      const movingPlanar = this.horizontalVelocity.lengthSq() > 0.0004;
+      const movingVertical = Math.abs(this.verticalVelocity) > 0.05;
+      const shouldSkipCollision = this.onGround && !movingPlanar && !movingVertical
+        && ((this.idleCollisionSkipCounter++ % this.idleCollisionSkipEvery) !== 0);
+
+      if (!shouldSkipCollision) {
+        this.idleCollisionSkipCounter = 0;
+      }
+
+      const collisionResult = shouldSkipCollision ? null : this.worldOctree.capsuleIntersect(this.playerCollider);
+      this.onGround = shouldSkipCollision ? this.onGround : false;
 
       if (collisionResult) {
         this.playerCollider.translate(collisionResult.normal.multiplyScalar(collisionResult.depth));
@@ -154,8 +189,8 @@ export class MovementSystem {
 
     return {
       moving: planarSpeed > 0.3,
-      running: sprintingForward && planarSpeed > this.walkSpeed + 0.6,
-      sprintingForward,
+      running: sprinting && planarSpeed > this.walkSpeed + 0.6,
+      sprintingForward: sprinting,
       jumping: this.airborneTime > this.jumpGraceSeconds,
       justJumped,
       onGround: this.onGround,
@@ -241,6 +276,7 @@ export class MovementSystem {
         case 'Space':
           if (!event.repeat) {
             this.input.jumpQueued = true;
+            this.jumpBufferTimer = this.jumpBufferSeconds;
           }
           break;
         default:

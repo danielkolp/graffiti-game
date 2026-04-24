@@ -73,6 +73,10 @@ export class SocketManager {
   }
 
   async _getIoFactory() {
+    if (!this.socketUrl && this._isGithubPagesHost()) {
+      return null;
+    }
+
     if (typeof globalThis.io === 'function') {
       return globalThis.io;
     }
@@ -134,6 +138,11 @@ export class SocketManager {
     } catch {
       return '/socket.io/socket.io.js';
     }
+  }
+
+  _isGithubPagesHost() {
+    const hostname = globalThis?.location?.hostname;
+    return typeof hostname === 'string' && hostname.endsWith('.github.io');
   }
 
   _normalizeBaseUrl(value) {

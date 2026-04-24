@@ -5,6 +5,8 @@ import { clamp, damp } from '../utils/math.js';
 const PLAYABLE_STATES = ['idle', 'walk', 'run', 'jump'];
 const QUARTER_TURN = Math.PI * 0.5;
 const PLAYER_MODEL_CANDIDATES = [
+  'models/idkbro.glb',
+  './models/idkbro.glb',
   '../models/idkbro.glb',
   '../../models/idkbro.glb',
   '/models/idkbro.glb'
@@ -400,8 +402,12 @@ export class PlayerController {
   }
 
   _resolveAnimationClips(clips) {
-    const exact = new Map();
-    const normalized = new Map();
+    const candidates = {
+      idle: [],
+      walk: [],
+      run: [],
+      jump: []
+    };
 
     for (const clip of clips) {
       if (!this._isUsableClip(clip)) {
@@ -410,37 +416,55 @@ export class PlayerController {
 
       const { full, base } = this._normalizeClipName(clip.name);
 
-      for (const stateName of PLAYABLE_STATES) {
-        if (full === stateName && !exact.has(stateName)) {
-          exact.set(stateName, clip);
-        }
+      if (base === 'idle' || base.startsWith('idle')) {
+        candidates.idle.push({ clip, full });
       }
 
-      if (!normalized.has('idle') && (base === 'idle' || base.startsWith('idle'))) {
-        normalized.set('idle', clip);
+      if (base === 'walk' || base === 'walking' || base.startsWith('walk')) {
+        candidates.walk.push({ clip, full });
       }
-      if (!normalized.has('walk') && (base === 'walk' || base === 'walking' || base.startsWith('walk'))) {
-        normalized.set('walk', clip);
+
+      if (base === 'run' || base === 'running' || base.startsWith('run')) {
+        candidates.run.push({ clip, full });
       }
-      if (!normalized.has('run') && (base === 'run' || base === 'running' || base.startsWith('run'))) {
-        normalized.set('run', clip);
-      }
+
       if (
-        !normalized.has('jump')
-        && (base === 'jump' || /^jump(\.|_|$)/.test(base))
+        (base === 'jump' || /^jump(\.|_|$)/.test(base))
         && !base.startsWith('jump_start')
         && !base.startsWith('jump_air')
         && !base.startsWith('jump_land')
       ) {
-        normalized.set('jump', clip);
+        candidates.jump.push({ clip, full });
       }
     }
 
+    const pick = (stateName) => {
+      const list = candidates[stateName];
+      if (!list || list.length === 0) {
+        return null;
+      }
+
+      const exactState = list.find((entry) => entry.full === stateName);
+      if (exactState) {
+        return exactState.clip;
+      }
+
+      // Prefer walk.002 when multiple walk clips exist (e.g. walk.001, walk.002).
+      if (stateName === 'walk') {
+        const preferredWalk = list.find((entry) => entry.full === 'walk.002' || entry.full === 'walk_002');
+        if (preferredWalk) {
+          return preferredWalk.clip;
+        }
+      }
+
+      return list[0].clip;
+    };
+
     return {
-      idle: exact.get('idle') || normalized.get('idle') || null,
-      walk: exact.get('walk') || normalized.get('walk') || null,
-      run: exact.get('run') || normalized.get('run') || null,
-      jump: exact.get('jump') || normalized.get('jump') || null
+      idle: pick('idle'),
+      walk: pick('walk'),
+      run: pick('run'),
+      jump: pick('jump')
     };
   }
 
@@ -628,6 +652,25 @@ export class PlayerController {
   }
 
   _resolveAnimationState(input) {
+    // If jump clip is clamped on its last frame and we've landed,
+    // force a locomotion/idle state so we don't get stuck in jump pose.
+    if (
+      this.currentState === 'jump'
+      && this.currentAction
+      && this.currentAction.isRunning() === false
+      && input.onGround
+    ) {
+      this.jumpLockActive = false;
+      this.groundedFrameStreak = 0;
+      if (input.sprintingForward) {
+        return 'run';
+      }
+      if (input.moving) {
+        return 'walk';
+      }
+      return 'idle';
+    }
+
     if (input.justJumped || this.jumpLockActive) {
       return 'jump';
     }

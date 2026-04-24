@@ -332,7 +332,14 @@ class GameApp {
 
     this.lastMovementState = movementState || this._createEmptyMovementState();
     const rawDeltaMs = rawDelta * 1000;
-    const hitch = rawDeltaMs > this.debugHitchDeltaThresholdMs || timings.total > this.debugHitchFrameThresholdMs;
+    const visibilityHidden = typeof document !== 'undefined' && document.hidden === true;
+    const rawDeltaLooksLikeSchedulerStall = (
+      rawDeltaMs > this.debugHitchDeltaThresholdMs
+      && timings.total < this.debugHitchFrameThresholdMs * 0.5
+      && (visibilityHidden || rawDeltaMs > 1000)
+    );
+    const hitch = timings.total > this.debugHitchFrameThresholdMs
+      || (rawDeltaMs > this.debugHitchDeltaThresholdMs && !rawDeltaLooksLikeSchedulerStall);
 
     const frameSnapshot = {
       timestamp: Date.now(),
