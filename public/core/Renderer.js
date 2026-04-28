@@ -5,6 +5,7 @@ import { RenderPixelatedPass } from '../vendor/three/examples/jsm/postprocessing
 import { ShaderPass } from '../vendor/three/examples/jsm/postprocessing/ShaderPass.js';
 import { FXAAShader } from '../vendor/three/examples/jsm/shaders/FXAAShader.js';
 import { UnrealBloomPass } from '../vendor/three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { UI_TEXT_LAYER } from './RenderLayers.js';
 
 const StylizePosterizeShader = {
   uniforms: {
@@ -76,6 +77,8 @@ export class RendererSystem {
     this.composer = new EffectComposer(this.renderer);
     this.renderPass = null;
     this.pixelationPass = null;
+    this.scene = null;
+    this.camera = null;
 
     this.fxaaPass = new ShaderPass(FXAAShader);
     this.composer.addPass(this.fxaaPass);
@@ -108,6 +111,9 @@ export class RendererSystem {
   }
 
   setSceneAndCamera(scene, camera) {
+    this.scene = scene;
+    this.camera = camera;
+
     if (this.renderPass) {
       this.composer.removePass(this.renderPass);
     }
@@ -151,7 +157,26 @@ export class RendererSystem {
   }
 
   render(deltaSeconds) {
+    if (!this.camera) {
+      this.composer.render(deltaSeconds);
+      return;
+    }
+
+    const baseMask = (this.camera.layers.mask | 1);
+    const worldMask = baseMask & ~(1 << UI_TEXT_LAYER);
+    this.camera.layers.mask = worldMask || 1;
     this.composer.render(deltaSeconds);
+
+    const prevAutoClear = this.renderer.autoClear;
+    const prevBackground = this.scene.background;
+    this.renderer.autoClear = false;
+    this.renderer.clearDepth();
+    this.camera.layers.mask = (1 << UI_TEXT_LAYER);
+    this.scene.background = null;
+    this.renderer.render(this.scene, this.camera);
+    this.scene.background = prevBackground;
+    this.camera.layers.mask = baseMask;
+    this.renderer.autoClear = prevAutoClear;
   }
 
   setPixelationEnabled(enabled) {

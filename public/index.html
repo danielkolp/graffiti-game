@@ -100,7 +100,7 @@
     </div>
 
     <div id="chat-hud" class="chat-hud">
-      <input id="chat-input" class="chat-input" type="text" maxlength="140" placeholder="Press Enter to chat..." />
+      <input id="chat-input" class="chat-input" type="text" maxlength="96" placeholder="Press Enter to chat..." />
       <button id="chat-send-button" class="chat-send-button" type="button">Send</button>
     </div>
 
@@ -108,11 +108,13 @@
   </div>
 
   <script>
+    const defaultRuntimeConfig = {
+      apiBaseUrl: '',
+      socketUrl: '',
+      stylizePreset: 'soft'
+    };
     window.__GRAFFITI_CONFIG = Object.assign(
-      {
-        apiBaseUrl: 'https://graffiti-game.onrender.com',
-        socketUrl: 'https://graffiti-game.onrender.com'
-      },
+      defaultRuntimeConfig,
       window.__GRAFFITI_CONFIG || {}
     );
   </script>
@@ -137,6 +139,6 @@
       console.error('Bootstrap timeout: startup failed after 8s');
     }, 8000);
   </script>
-  <script src="dist/app.js?v=20260423-ghpages-fix1"></script>
+  <script src="dist/app.js?v=20260428-local-chat-profile-sync"></script>
 </body>
 </html>

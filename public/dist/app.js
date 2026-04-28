@@ -44397,6 +44397,9 @@
   UnrealBloomPass.BlurDirectionX = new Vector22(1, 0);
   UnrealBloomPass.BlurDirectionY = new Vector22(0, 1);
 
+  // public/core/RenderLayers.js
+  var UI_TEXT_LAYER = 7;
+
   // public/core/Renderer.js
   var StylizePosterizeShader = {
     uniforms: {
@@ -44462,6 +44465,8 @@
       this.composer = new EffectComposer(this.renderer);
       this.renderPass = null;
       this.pixelationPass = null;
+      this.scene = null;
+      this.camera = null;
       this.fxaaPass = new ShaderPass(FXAAShader);
       this.composer.addPass(this.fxaaPass);
       this.stylizePass = new ShaderPass(StylizePosterizeShader);
@@ -44487,6 +44492,8 @@
       container.appendChild(this.renderer.domElement);
     }
     setSceneAndCamera(scene, camera) {
+      this.scene = scene;
+      this.camera = camera;
       if (this.renderPass) {
         this.composer.removePass(this.renderPass);
       }
@@ -44521,7 +44528,24 @@
       }
     }
     render(deltaSeconds) {
+      if (!this.camera) {
+        this.composer.render(deltaSeconds);
+        return;
+      }
+      const baseMask = this.camera.layers.mask | 1;
+      const worldMask = baseMask & ~(1 << UI_TEXT_LAYER);
+      this.camera.layers.mask = worldMask || 1;
       this.composer.render(deltaSeconds);
+      const prevAutoClear = this.renderer.autoClear;
+      const prevBackground = this.scene.background;
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.camera.layers.mask = 1 << UI_TEXT_LAYER;
+      this.scene.background = null;
+      this.renderer.render(this.scene, this.camera);
+      this.scene.background = prevBackground;
+      this.camera.layers.mask = baseMask;
+      this.renderer.autoClear = prevAutoClear;
     }
     setPixelationEnabled(enabled) {
       this.options.enablePixelation = enabled === true;
@@ -47451,11 +47475,12 @@
 
   // public/core/SceneManager.js
   var CITY_MODEL_CANDIDATES = [
-    "City.glb",
-    "./City.glb",
+    "/City.glb",
     "../City.glb",
     "../../City.glb",
-    "/City.glb"
+    "City.glb",
+    "./City.glb",
+    "assets/City.glb"
   ];
   var CITY_LOAD_TIMEOUT_MS = 15e3;
   function toStandardMaterial(material, roughnessSeed) {
@@ -48010,18 +48035,29 @@
   var PLAYABLE_STATES = ["idle", "walk", "run"];
   var QUARTER_TURN = Math.PI * 0.5;
   var PLAYER_MODEL_CANDIDATES = [
-    "models/idkbro.glb",
-    "./models/idkbro.glb",
+    "/models/idkbro.glb",
     "../models/idkbro.glb",
     "../../models/idkbro.glb",
-    "/models/idkbro.glb"
+    "/idkbro.glb",
+    "models/idkbro.glb",
+    "./models/idkbro.glb",
+    "assets/idkbro.glb"
   ];
   var PLAYER_LOAD_TIMEOUT_MS = 15e3;
   var DEFAULT_PLAYER_COLOR = "#1b69fa";
   var DEFAULT_PLAYER_NAME = "Writer";
   var CHAT_BUBBLE_DURATION_MS = 5e3;
-  var CHAT_BUBBLE_MAX_CHARS = 140;
+  var CHAT_BUBBLE_MAX_CHARS = 96;
   var PLAYER_NAME_MAX_CHARS = 18;
+  var NAME_TAG_HEAD_GAP = 1.2;
+  var CHAT_BUBBLE_TAG_GAP = 0.15;
+  var LABEL_HEAD_CLEARANCE_FACTOR = 0.16;
+  var LABEL_HEAD_CLEARANCE_MIN = 0.35;
+  var LABEL_HEAD_CLEARANCE_MAX = 0.78;
+  var CHAT_BUBBLE_LINE_HEIGHT = 36;
+  var CHAT_BUBBLE_MIN_HEIGHT = 92;
+  var CHAT_BUBBLE_SPRITE_BASE_WIDTH = 6.2;
+  var CHAT_BUBBLE_SPRITE_BASE_HEIGHT = 3.1;
   function normalizeAngle2(value) {
     let angle = value;
     while (angle > Math.PI) angle -= Math.PI * 2;
@@ -48569,13 +48605,23 @@
     }
     _estimateLabelAnchorY(ownerObject3D) {
       if (!ownerObject3D) {
-        return 3.6;
+        return 5;
       }
       const visual = ownerObject3D.children?.[0] || ownerObject3D;
+      ownerObject3D.updateWorldMatrix(true, false);
+      visual.updateWorldMatrix(true, true);
       this.tempBounds.setFromObject(visual);
       this.tempBounds.getSize(this.tempBoundsSize);
+      ownerObject3D.getWorldPosition(this.tempWorldAnchor);
       const height = Number.isFinite(this.tempBoundsSize.y) && this.tempBoundsSize.y > 0.1 ? this.tempBoundsSize.y : 2.2;
-      return clamp3(height + 0.9, 2.8, 6.8);
+      const topLocalY = this.tempBounds.max.y - this.tempWorldAnchor.y;
+      const topAnchor = Number.isFinite(topLocalY) ? topLocalY : height * 0.5;
+      const headClearance = clamp3(
+        height * LABEL_HEAD_CLEARANCE_FACTOR,
+        LABEL_HEAD_CLEARANCE_MIN,
+        LABEL_HEAD_CLEARANCE_MAX
+      );
+      return clamp3(topAnchor + headClearance, 2.9, 7.6);
     }
     _setRemoteState(remote, nextState) {
       if (!remote || !remote.actions) {
@@ -49133,8 +49179,8 @@
       }
       const texture = new CanvasTexture(canvas);
       texture.colorSpace = SRGBColorSpace;
-      texture.minFilter = LinearFilter;
-      texture.magFilter = LinearFilter;
+      texture.minFilter = NearestFilter;
+      texture.magFilter = NearestFilter;
       const material = new SpriteMaterial({
         map: texture,
         transparent: true,
@@ -49142,8 +49188,9 @@
         depthTest: false
       });
       const sprite = new Sprite(material);
+      sprite.layers.set(UI_TEXT_LAYER);
       sprite.position.set(0, 4.6, 0);
-      sprite.scale.set(6.2, 2.45, 1);
+      sprite.scale.set(4.8, 1.7, 1);
       sprite.renderOrder = 3e3;
       sprite.visible = false;
       ownerObject3D.add(sprite);
@@ -49176,8 +49223,8 @@
       }
       const texture = new CanvasTexture(canvas);
       texture.colorSpace = SRGBColorSpace;
-      texture.minFilter = LinearFilter;
-      texture.magFilter = LinearFilter;
+      texture.minFilter = NearestFilter;
+      texture.magFilter = NearestFilter;
       const material = new SpriteMaterial({
         map: texture,
         transparent: true,
@@ -49185,6 +49232,7 @@
         depthTest: false
       });
       const sprite = new Sprite(material);
+      sprite.layers.set(UI_TEXT_LAYER);
       sprite.position.set(0, 3.9, 0);
       sprite.scale.set(4.4, 1.1, 1);
       sprite.renderOrder = 2900;
@@ -49206,22 +49254,10 @@
       const w = canvas.width - pad * 2;
       const h = canvas.height - pad * 2;
       ctx.fillStyle = "rgba(0, 0, 0, 0.76)";
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.36)";
-      ctx.lineWidth = 2;
-      const radius = 12;
-      ctx.beginPath();
-      ctx.moveTo(pad + radius, pad);
-      ctx.lineTo(pad + w - radius, pad);
-      ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + radius);
-      ctx.lineTo(pad + w, pad + h - radius);
-      ctx.quadraticCurveTo(pad + w, pad + h, pad + w - radius, pad + h);
-      ctx.lineTo(pad + radius, pad + h);
-      ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - radius);
-      ctx.lineTo(pad, pad + radius);
-      ctx.quadraticCurveTo(pad, pad, pad + radius, pad);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 4;
+      ctx.fillRect(pad, pad, w, h);
+      ctx.strokeRect(pad + 2, pad + 2, w - 4, h - 4);
       ctx.fillStyle = "#ffffff";
       ctx.font = '700 30px Consolas, "Courier New", monospace';
       ctx.textAlign = "center";
@@ -49241,62 +49277,107 @@
         texture.needsUpdate = true;
         return;
       }
-      const pad = 12;
-      const w = canvas.width - pad * 2;
-      const h = canvas.height - 32;
-      const r = 20;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
-      ctx.strokeStyle = "rgba(8, 8, 8, 0.92)";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(pad + r, pad);
-      ctx.lineTo(pad + w - r, pad);
-      ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + r);
-      ctx.lineTo(pad + w, pad + h - r);
-      ctx.quadraticCurveTo(pad + w, pad + h, pad + w - r, pad + h);
-      ctx.lineTo(canvas.width * 0.5 + 26, pad + h);
-      ctx.lineTo(canvas.width * 0.5, canvas.height - 6);
-      ctx.lineTo(canvas.width * 0.5 - 26, pad + h);
-      ctx.lineTo(pad + r, pad + h);
-      ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - r);
-      ctx.lineTo(pad, pad + r);
-      ctx.quadraticCurveTo(pad, pad, pad + r, pad);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      const clampedText = content.slice(0, CHAT_BUBBLE_MAX_CHARS);
       ctx.fillStyle = "#0a0a0a";
-      ctx.font = '700 34px Consolas, "Courier New", monospace';
+      ctx.font = '700 30px Consolas, "Courier New", monospace';
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      const clampedText = content.slice(0, CHAT_BUBBLE_MAX_CHARS);
       const words = clampedText.split(/\s+/).filter(Boolean);
+      const wrapWidth = canvas.width - 120;
       const lines = [];
       let line = "";
-      for (const word of words) {
-        const candidate = line ? `${line} ${word}` : word;
-        if (ctx.measureText(candidate).width < w - 40) {
-          line = candidate;
-        } else {
-          if (line) {
-            lines.push(line);
+      const splitLongWord = (inputWord) => {
+        const chunks = [];
+        let chunk = "";
+        for (const ch of inputWord) {
+          const next = `${chunk}${ch}`;
+          if (chunk && ctx.measureText(next).width > wrapWidth) {
+            chunks.push(chunk);
+            chunk = ch;
+          } else {
+            chunk = next;
           }
-          line = word;
         }
-        if (lines.length >= 2) {
-          break;
+        if (chunk) {
+          chunks.push(chunk);
+        }
+        return chunks;
+      };
+      const pushWrappedWord = (wordPart) => {
+        const candidate = line ? `${line} ${wordPart}` : wordPart;
+        if (ctx.measureText(candidate).width <= wrapWidth) {
+          line = candidate;
+          return;
+        }
+        if (line) {
+          lines.push(line);
+        }
+        line = wordPart;
+      };
+      for (const rawWord of words) {
+        if (ctx.measureText(rawWord).width <= wrapWidth) {
+          pushWrappedWord(rawWord);
+          continue;
+        }
+        const chunks = splitLongWord(rawWord);
+        for (const chunk of chunks) {
+          pushWrappedWord(chunk);
         }
       }
-      if (line && lines.length < 2) {
+      if (line) {
         lines.push(line);
       }
       if (lines.length === 0) {
         lines.push(clampedText);
       }
-      const lineHeight = 38;
-      const startY = canvas.height * 0.5 - (lines.length - 1) * lineHeight * 0.5 - 10;
+      const longestLineWidth = lines.reduce((maxWidth, value) => Math.max(maxWidth, ctx.measureText(value).width), 0);
+      const padX = clamp3(56 - clampedText.length * 0.25, 24, 56);
+      const padY = clamp3(22 + lines.length * 4, 22, 52);
+      const lineHeight = CHAT_BUBBLE_LINE_HEIGHT;
+      const bubbleWidth = clamp3(longestLineWidth + padX * 2, 180, canvas.width - 24);
+      const bubbleHeight = clamp3(lines.length * lineHeight + padY * 2, CHAT_BUBBLE_MIN_HEIGHT, canvas.height - 28);
+      const bubbleX = (canvas.width - bubbleWidth) * 0.5;
+      const bubbleY = 10;
+      const bubbleRadius = 18;
+      const tailWidth = 44;
+      const tailTipY = canvas.height - 8;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
+      ctx.strokeStyle = "rgba(8, 8, 8, 0.92)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(bubbleX + bubbleRadius, bubbleY);
+      ctx.lineTo(bubbleX + bubbleWidth - bubbleRadius, bubbleY);
+      ctx.quadraticCurveTo(bubbleX + bubbleWidth, bubbleY, bubbleX + bubbleWidth, bubbleY + bubbleRadius);
+      ctx.lineTo(bubbleX + bubbleWidth, bubbleY + bubbleHeight - bubbleRadius);
+      ctx.quadraticCurveTo(
+        bubbleX + bubbleWidth,
+        bubbleY + bubbleHeight,
+        bubbleX + bubbleWidth - bubbleRadius,
+        bubbleY + bubbleHeight
+      );
+      ctx.lineTo(canvas.width * 0.5 + tailWidth * 0.5, bubbleY + bubbleHeight);
+      ctx.lineTo(canvas.width * 0.5, tailTipY);
+      ctx.lineTo(canvas.width * 0.5 - tailWidth * 0.5, bubbleY + bubbleHeight);
+      ctx.lineTo(bubbleX + bubbleRadius, bubbleY + bubbleHeight);
+      ctx.quadraticCurveTo(bubbleX, bubbleY + bubbleHeight, bubbleX, bubbleY + bubbleHeight - bubbleRadius);
+      ctx.lineTo(bubbleX, bubbleY + bubbleRadius);
+      ctx.quadraticCurveTo(bubbleX, bubbleY, bubbleX + bubbleRadius, bubbleY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      const textCenterY = bubbleY + bubbleHeight * 0.5 - 2;
+      const startY = textCenterY - (lines.length - 1) * lineHeight * 0.5;
+      ctx.fillStyle = "#0a0a0a";
       for (let i = 0; i < lines.length; i += 1) {
         ctx.fillText(lines[i], canvas.width * 0.5, startY + i * lineHeight);
       }
+      const widthScale = bubbleWidth / canvas.width;
+      const heightScale = (bubbleHeight + 28) / canvas.height;
+      bubble.sprite.scale.set(
+        CHAT_BUBBLE_SPRITE_BASE_WIDTH * widthScale,
+        CHAT_BUBBLE_SPRITE_BASE_HEIGHT * heightScale,
+        1
+      );
       texture.needsUpdate = true;
     }
     _setChatBubbleMessage(bubble, message, durationMs) {
@@ -49355,22 +49436,28 @@
       bubble.sprite.visible = false;
     }
     _updateLabelAnchors() {
-      const applyAnchor = (ownerObject3D, nameTag, chatBubble, cachedAnchor = null) => {
+      const applyAnchor = (ownerObject3D, nameTag, chatBubble, remote = null) => {
         if (!ownerObject3D) {
           return;
         }
-        const anchor = Number.isFinite(cachedAnchor) ? cachedAnchor : Number(ownerObject3D.userData?.labelAnchorY) || this._estimateLabelAnchorY(ownerObject3D);
+        const anchor = this._estimateLabelAnchorY(ownerObject3D);
         ownerObject3D.userData.labelAnchorY = anchor;
+        if (remote) {
+          remote.labelAnchorY = anchor;
+        }
+        const tagHalfY = (nameTag?.sprite?.scale?.y || 1.1) * 0.5;
+        const nameTagY = anchor + tagHalfY + NAME_TAG_HEAD_GAP;
         if (nameTag?.sprite) {
-          nameTag.sprite.position.y = anchor + 0.18;
+          nameTag.sprite.position.y = nameTagY;
         }
         if (chatBubble?.sprite) {
-          chatBubble.sprite.position.y = anchor + 1.05;
+          const bubbleHalfY = (chatBubble.sprite.scale.y || 1.6) * 0.5;
+          chatBubble.sprite.position.y = nameTagY + tagHalfY + bubbleHalfY + CHAT_BUBBLE_TAG_GAP;
         }
       };
-      applyAnchor(this.localPlayer, this.localNameTag, this.localChatBubble, this.localPlayer?.userData?.labelAnchorY);
+      applyAnchor(this.localPlayer, this.localNameTag, this.localChatBubble, null);
       for (const remote of this.remotePlayers.values()) {
-        applyAnchor(remote.object3D, remote.nameTag, remote.chatBubble, remote.labelAnchorY);
+        applyAnchor(remote.object3D, remote.nameTag, remote.chatBubble, remote);
       }
     }
   };
@@ -52706,6 +52793,12 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
         setTyping(false);
       };
       this.chatInput.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          this.chatInput.blur();
+          setTyping(false);
+          return;
+        }
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
           sendCurrentMessage();
@@ -52725,6 +52818,19 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
         }
       });
       this.chatInput.addEventListener("blur", () => {
+        setTyping(false);
+      });
+      document.addEventListener("pointerdown", (event) => {
+        if (!this.chatInput) {
+          return;
+        }
+        if (document.activeElement !== this.chatInput) {
+          return;
+        }
+        if (event.target === this.chatInput || event.target === this.chatSendButton) {
+          return;
+        }
+        this.chatInput.blur();
         setTyping(false);
       });
       this.chatSendButton.addEventListener("click", () => {

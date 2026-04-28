@@ -2,22 +2,39 @@ import * as THREE from '../vendor/three/build/three.module.js';
 import { GLTFLoader } from '../vendor/three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from '../vendor/three/examples/jsm/utils/SkeletonUtils.js';
 import { clamp, damp } from '../utils/math.js';
+import { UI_TEXT_LAYER } from '../core/RenderLayers.js';
 
 const PLAYABLE_STATES = ['idle', 'walk', 'run'];
 const QUARTER_TURN = Math.PI * 0.5;
 const PLAYER_MODEL_CANDIDATES = [
-  'models/idkbro.glb',
-  './models/idkbro.glb',
+  '/models/idkbro.glb',
   '../models/idkbro.glb',
   '../../models/idkbro.glb',
-  '/models/idkbro.glb'
+  '/idkbro.glb',
+  'models/idkbro.glb',
+  './models/idkbro.glb',
+  'assets/idkbro.glb'
 ];
 const PLAYER_LOAD_TIMEOUT_MS = 15000;
 const DEFAULT_PLAYER_COLOR = '#1b69fa';
 const DEFAULT_PLAYER_NAME = 'Writer';
 const CHAT_BUBBLE_DURATION_MS = 5000;
-const CHAT_BUBBLE_MAX_CHARS = 140;
+const CHAT_BUBBLE_MAX_CHARS = 96;
 const PLAYER_NAME_MAX_CHARS = 18;
+// Label height tuning:
+// Increase NAME_TAG_HEAD_GAP to move nametag higher above the head.
+// Increase CHAT_BUBBLE_TAG_GAP to move chat bubble higher above the nametag.
+const NAME_TAG_HEAD_GAP = 1.2;
+const CHAT_BUBBLE_TAG_GAP = 0.15;
+// Anchor clearance tuning:
+// Raise/min-max these values if the nametag still overlaps the head.
+const LABEL_HEAD_CLEARANCE_FACTOR = 0.16;
+const LABEL_HEAD_CLEARANCE_MIN = 0.35;
+const LABEL_HEAD_CLEARANCE_MAX = 0.78;
+const CHAT_BUBBLE_LINE_HEIGHT = 36;
+const CHAT_BUBBLE_MIN_HEIGHT = 92;
+const CHAT_BUBBLE_SPRITE_BASE_WIDTH = 6.2;
+const CHAT_BUBBLE_SPRITE_BASE_HEIGHT = 3.1;
 
 function normalizeAngle(value) {
   let angle = value;
@@ -661,18 +678,28 @@ export class PlayerController {
 
   _estimateLabelAnchorY(ownerObject3D) {
     if (!ownerObject3D) {
-      return 3.6;
+      return 5;
     }
 
     const visual = ownerObject3D.children?.[0] || ownerObject3D;
+    ownerObject3D.updateWorldMatrix(true, false);
+    visual.updateWorldMatrix(true, true);
     this.tempBounds.setFromObject(visual);
     this.tempBounds.getSize(this.tempBoundsSize);
+    ownerObject3D.getWorldPosition(this.tempWorldAnchor);
 
     const height = Number.isFinite(this.tempBoundsSize.y) && this.tempBoundsSize.y > 0.1
       ? this.tempBoundsSize.y
       : 2.2;
+    const topLocalY = this.tempBounds.max.y - this.tempWorldAnchor.y;
+    const topAnchor = Number.isFinite(topLocalY) ? topLocalY : (height * 0.5);
+    const headClearance = clamp(
+      height * LABEL_HEAD_CLEARANCE_FACTOR,
+      LABEL_HEAD_CLEARANCE_MIN,
+      LABEL_HEAD_CLEARANCE_MAX
+    );
 
-    return clamp(height + 0.9, 2.8, 6.8);
+    return clamp(topAnchor + headClearance, 2.9, 7.6);
   }
 
   _setRemoteState(remote, nextState) {
@@ -1380,8 +1407,8 @@ export class PlayerController {
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
 
     const material = new THREE.SpriteMaterial({
       map: texture,
@@ -1391,8 +1418,9 @@ export class PlayerController {
     });
 
     const sprite = new THREE.Sprite(material);
+    sprite.layers.set(UI_TEXT_LAYER);
     sprite.position.set(0, 4.6, 0);
-    sprite.scale.set(6.2, 2.45, 1);
+    sprite.scale.set(4.8, 1.7, 1);
     sprite.renderOrder = 3000;
     sprite.visible = false;
     ownerObject3D.add(sprite);
@@ -1431,8 +1459,8 @@ export class PlayerController {
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
 
     const material = new THREE.SpriteMaterial({
       map: texture,
@@ -1442,6 +1470,7 @@ export class PlayerController {
     });
 
     const sprite = new THREE.Sprite(material);
+    sprite.layers.set(UI_TEXT_LAYER);
     sprite.position.set(0, 3.9, 0);
     sprite.scale.set(4.4, 1.1, 1);
     sprite.renderOrder = 2900;
@@ -1469,22 +1498,10 @@ export class PlayerController {
     const h = canvas.height - (pad * 2);
 
     ctx.fillStyle = 'rgba(0, 0, 0, 0.76)';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.36)';
-    ctx.lineWidth = 2;
-    const radius = 12;
-    ctx.beginPath();
-    ctx.moveTo(pad + radius, pad);
-    ctx.lineTo(pad + w - radius, pad);
-    ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + radius);
-    ctx.lineTo(pad + w, pad + h - radius);
-    ctx.quadraticCurveTo(pad + w, pad + h, pad + w - radius, pad + h);
-    ctx.lineTo(pad + radius, pad + h);
-    ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - radius);
-    ctx.lineTo(pad, pad + radius);
-    ctx.quadraticCurveTo(pad, pad, pad + radius, pad);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.fillRect(pad, pad, w, h);
+    ctx.strokeRect(pad + 2, pad + 2, w - 4, h - 4);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '700 30px Consolas, "Courier New", monospace';
@@ -1510,66 +1527,117 @@ export class PlayerController {
       return;
     }
 
-    const pad = 12;
-    const w = canvas.width - (pad * 2);
-    const h = canvas.height - 32;
-    const r = 20;
-
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
-    ctx.strokeStyle = 'rgba(8, 8, 8, 0.92)';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(pad + r, pad);
-    ctx.lineTo(pad + w - r, pad);
-    ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + r);
-    ctx.lineTo(pad + w, pad + h - r);
-    ctx.quadraticCurveTo(pad + w, pad + h, pad + w - r, pad + h);
-    ctx.lineTo((canvas.width * 0.5) + 26, pad + h);
-    ctx.lineTo(canvas.width * 0.5, canvas.height - 6);
-    ctx.lineTo((canvas.width * 0.5) - 26, pad + h);
-    ctx.lineTo(pad + r, pad + h);
-    ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - r);
-    ctx.lineTo(pad, pad + r);
-    ctx.quadraticCurveTo(pad, pad, pad + r, pad);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
+    const clampedText = content.slice(0, CHAT_BUBBLE_MAX_CHARS);
     ctx.fillStyle = '#0a0a0a';
-    ctx.font = '700 34px Consolas, "Courier New", monospace';
+    ctx.font = '700 30px Consolas, "Courier New", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    const clampedText = content.slice(0, CHAT_BUBBLE_MAX_CHARS);
     const words = clampedText.split(/\s+/).filter(Boolean);
+    const wrapWidth = canvas.width - 120;
     const lines = [];
     let line = '';
-    for (const word of words) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (ctx.measureText(candidate).width < (w - 40)) {
-        line = candidate;
-      } else {
-        if (line) {
-          lines.push(line);
+
+    const splitLongWord = (inputWord) => {
+      const chunks = [];
+      let chunk = '';
+      for (const ch of inputWord) {
+        const next = `${chunk}${ch}`;
+        if (chunk && ctx.measureText(next).width > wrapWidth) {
+          chunks.push(chunk);
+          chunk = ch;
+        } else {
+          chunk = next;
         }
-        line = word;
       }
-      if (lines.length >= 2) {
-        break;
+      if (chunk) {
+        chunks.push(chunk);
+      }
+      return chunks;
+    };
+
+    const pushWrappedWord = (wordPart) => {
+      const candidate = line ? `${line} ${wordPart}` : wordPart;
+      if (ctx.measureText(candidate).width <= wrapWidth) {
+        line = candidate;
+        return;
+      }
+      if (line) {
+        lines.push(line);
+      }
+      line = wordPart;
+    };
+
+    for (const rawWord of words) {
+      if (ctx.measureText(rawWord).width <= wrapWidth) {
+        pushWrappedWord(rawWord);
+        continue;
+      }
+
+      const chunks = splitLongWord(rawWord);
+      for (const chunk of chunks) {
+        pushWrappedWord(chunk);
       }
     }
-    if (line && lines.length < 2) {
+
+    if (line) {
       lines.push(line);
     }
     if (lines.length === 0) {
       lines.push(clampedText);
     }
 
-    const lineHeight = 38;
-    const startY = (canvas.height * 0.5) - ((lines.length - 1) * lineHeight * 0.5) - 10;
+    const longestLineWidth = lines.reduce((maxWidth, value) => Math.max(maxWidth, ctx.measureText(value).width), 0);
+    const padX = clamp(56 - (clampedText.length * 0.25), 24, 56);
+    const padY = clamp(22 + (lines.length * 4), 22, 52);
+    const lineHeight = CHAT_BUBBLE_LINE_HEIGHT;
+    const bubbleWidth = clamp(longestLineWidth + (padX * 2), 180, canvas.width - 24);
+    const bubbleHeight = clamp((lines.length * lineHeight) + (padY * 2), CHAT_BUBBLE_MIN_HEIGHT, canvas.height - 28);
+    const bubbleX = (canvas.width - bubbleWidth) * 0.5;
+    const bubbleY = 10;
+    const bubbleRadius = 18;
+    const tailWidth = 44;
+    const tailTipY = canvas.height - 8;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+    ctx.strokeStyle = 'rgba(8, 8, 8, 0.92)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(bubbleX + bubbleRadius, bubbleY);
+    ctx.lineTo(bubbleX + bubbleWidth - bubbleRadius, bubbleY);
+    ctx.quadraticCurveTo(bubbleX + bubbleWidth, bubbleY, bubbleX + bubbleWidth, bubbleY + bubbleRadius);
+    ctx.lineTo(bubbleX + bubbleWidth, bubbleY + bubbleHeight - bubbleRadius);
+    ctx.quadraticCurveTo(
+      bubbleX + bubbleWidth,
+      bubbleY + bubbleHeight,
+      bubbleX + bubbleWidth - bubbleRadius,
+      bubbleY + bubbleHeight
+    );
+    ctx.lineTo((canvas.width * 0.5) + (tailWidth * 0.5), bubbleY + bubbleHeight);
+    ctx.lineTo(canvas.width * 0.5, tailTipY);
+    ctx.lineTo((canvas.width * 0.5) - (tailWidth * 0.5), bubbleY + bubbleHeight);
+    ctx.lineTo(bubbleX + bubbleRadius, bubbleY + bubbleHeight);
+    ctx.quadraticCurveTo(bubbleX, bubbleY + bubbleHeight, bubbleX, bubbleY + bubbleHeight - bubbleRadius);
+    ctx.lineTo(bubbleX, bubbleY + bubbleRadius);
+    ctx.quadraticCurveTo(bubbleX, bubbleY, bubbleX + bubbleRadius, bubbleY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    const textCenterY = bubbleY + (bubbleHeight * 0.5) - 2;
+    const startY = textCenterY - ((lines.length - 1) * lineHeight * 0.5);
+    ctx.fillStyle = '#0a0a0a';
     for (let i = 0; i < lines.length; i += 1) {
       ctx.fillText(lines[i], canvas.width * 0.5, startY + (i * lineHeight));
     }
+
+    const widthScale = bubbleWidth / canvas.width;
+    const heightScale = (bubbleHeight + 28) / canvas.height;
+    bubble.sprite.scale.set(
+      CHAT_BUBBLE_SPRITE_BASE_WIDTH * widthScale,
+      CHAT_BUBBLE_SPRITE_BASE_HEIGHT * heightScale,
+      1
+    );
 
     texture.needsUpdate = true;
   }
@@ -1642,27 +1710,32 @@ export class PlayerController {
   }
 
   _updateLabelAnchors() {
-    const applyAnchor = (ownerObject3D, nameTag, chatBubble, cachedAnchor = null) => {
+    const applyAnchor = (ownerObject3D, nameTag, chatBubble, remote = null) => {
       if (!ownerObject3D) {
         return;
       }
 
-      const anchor = Number.isFinite(cachedAnchor)
-        ? cachedAnchor
-        : (Number(ownerObject3D.userData?.labelAnchorY) || this._estimateLabelAnchorY(ownerObject3D));
+      const anchor = this._estimateLabelAnchorY(ownerObject3D);
       ownerObject3D.userData.labelAnchorY = anchor;
+      if (remote) {
+        remote.labelAnchorY = anchor;
+      }
+
+      const tagHalfY = (nameTag?.sprite?.scale?.y || 1.1) * 0.5;
+      const nameTagY = anchor + tagHalfY + NAME_TAG_HEAD_GAP;
 
       if (nameTag?.sprite) {
-        nameTag.sprite.position.y = anchor + 0.18;
+        nameTag.sprite.position.y = nameTagY;
       }
       if (chatBubble?.sprite) {
-        chatBubble.sprite.position.y = anchor + 1.05;
+        const bubbleHalfY = (chatBubble.sprite.scale.y || 1.6) * 0.5;
+        chatBubble.sprite.position.y = nameTagY + tagHalfY + bubbleHalfY + CHAT_BUBBLE_TAG_GAP;
       }
     };
 
-    applyAnchor(this.localPlayer, this.localNameTag, this.localChatBubble, this.localPlayer?.userData?.labelAnchorY);
+    applyAnchor(this.localPlayer, this.localNameTag, this.localChatBubble, null);
     for (const remote of this.remotePlayers.values()) {
-      applyAnchor(remote.object3D, remote.nameTag, remote.chatBubble, remote.labelAnchorY);
+      applyAnchor(remote.object3D, remote.nameTag, remote.chatBubble, remote);
     }
   }
 }

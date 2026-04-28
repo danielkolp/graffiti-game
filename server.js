@@ -59,11 +59,16 @@ const API_VERSION = 'strokes-v3-chat-profile';
 const MAX_STROKES = 12000;
 const MAX_POINTS_PER_STROKE = 320;
 const MAX_ERASE_TARGETS = 64;
-const MAX_CHAT_LENGTH = 140;
+const MAX_CHAT_LENGTH = 96;
+const CHAT_MIN_INTERVAL_MS = 700;
+const CHAT_DUPLICATE_WINDOW_MS = 8000;
+const CHAT_RATE_WINDOW_MS = 10000;
+const CHAT_RATE_MAX_MESSAGES = 6;
 const MAX_PLAYER_NAME_LENGTH = 18;
 
 const strokes = new Map();
 const players = new Map();
+const chatModeration = new Map();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -312,6 +317,39 @@ function sanitizeChatMessage(payload) {
   return message || null;
 }
 
+function passesChatSpamFilter(socketId, message) {
+  const now = Date.now();
+  const normalizedMessage = String(message || '').trim().toLowerCase();
+  const state = chatModeration.get(socketId) || {
+    lastMessageAt: 0,
+    lastMessageNormalized: '',
+    timeline: []
+  };
+
+  if (now - state.lastMessageAt < CHAT_MIN_INTERVAL_MS) {
+    return false;
+  }
+
+  if (
+    normalizedMessage
+    && normalizedMessage === state.lastMessageNormalized
+    && now - state.lastMessageAt < CHAT_DUPLICATE_WINDOW_MS
+  ) {
+    return false;
+  }
+
+  state.timeline = state.timeline.filter((timestamp) => (now - timestamp) <= CHAT_RATE_WINDOW_MS);
+  if (state.timeline.length >= CHAT_RATE_MAX_MESSAGES) {
+    return false;
+  }
+
+  state.timeline.push(now);
+  state.lastMessageAt = now;
+  state.lastMessageNormalized = normalizedMessage;
+  chatModeration.set(socketId, state);
+  return true;
+}
+
 function strokePath(strokeId) {
   const safeId = strokeId.replace(/[^a-zA-Z0-9-_]/g, '_');
   return {
@@ -557,6 +595,9 @@ io.on('connection', (socket) => {
     if (!message) {
       return;
     }
+    if (!passesChatSpamFilter(socket.id, message)) {
+      return;
+    }
 
     io.emit('chat:message', {
       id: socket.id,
@@ -575,6 +616,7 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     players.delete(socket.id);
+    chatModeration.delete(socket.id);
     io.emit('chat:typing', { id: socket.id, typing: false });
     io.emit('player:leave', { id: socket.id });
     console.log(`Socket disconnected: ${socket.id}`);

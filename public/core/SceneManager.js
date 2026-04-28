@@ -3,11 +3,12 @@ import { GLTFLoader } from '../vendor/three/examples/jsm/loaders/GLTFLoader.js';
 import { Octree } from '../vendor/three/examples/jsm/math/Octree.js';
 
 const CITY_MODEL_CANDIDATES = [
-  'City.glb',
-  './City.glb',
+  '/City.glb',
   '../City.glb',
   '../../City.glb',
-  '/City.glb'
+  'City.glb',
+  './City.glb',
+  'assets/City.glb'
 ];
 const CITY_LOAD_TIMEOUT_MS = 15000;
 

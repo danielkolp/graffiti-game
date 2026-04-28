@@ -404,6 +404,13 @@ export class UIManager {
     };
 
     this.chatInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.chatInput.blur();
+        setTyping(false);
+        return;
+      }
+
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         sendCurrentMessage();
@@ -426,6 +433,23 @@ export class UIManager {
     });
 
     this.chatInput.addEventListener('blur', () => {
+      setTyping(false);
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+      if (!this.chatInput) {
+        return;
+      }
+
+      if (document.activeElement !== this.chatInput) {
+        return;
+      }
+
+      if (event.target === this.chatInput || event.target === this.chatSendButton) {
+        return;
+      }
+
+      this.chatInput.blur();
       setTyping(false);
     });
 
