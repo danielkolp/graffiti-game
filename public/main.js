@@ -9,13 +9,78 @@ import { SocketManager } from './network/SocketManager.js';
 import { SyncSystem } from './network/SyncSystem.js';
 import { UIManager } from './ui/UIManager.js';
 
+const BACKEND_STORAGE_KEY = 'graffiti-backend-url';
+
+function normalizeBaseUrl(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.replace(/\/$/, '');
+}
+
+function readStoredBackendUrl() {
+  try {
+    return normalizeBaseUrl(globalThis.localStorage?.getItem(BACKEND_STORAGE_KEY) || '');
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredBackendUrl(value) {
+  try {
+    const normalized = normalizeBaseUrl(value);
+    if (!normalized) {
+      globalThis.localStorage?.removeItem(BACKEND_STORAGE_KEY);
+      return;
+    }
+    globalThis.localStorage?.setItem(BACKEND_STORAGE_KEY, normalized);
+  } catch {
+    // Ignore localStorage restrictions (private mode, blocked storage, etc.).
+  }
+}
+
 function getRuntimeConfig() {
   const globalConfig = globalThis.__GRAFFITI_CONFIG || {};
   const params = new URLSearchParams(globalThis.location.search);
+  const queryBackendUrl = normalizeBaseUrl(params.get('backend') || '');
+  const queryApiUrl = normalizeBaseUrl(params.get('api') || '');
+  const querySocketUrl = normalizeBaseUrl(params.get('socket') || '');
 
-  const apiBaseUrl = (params.get('api') || globalConfig.apiBaseUrl || '').trim() || null;
-  const socketUrl = (params.get('socket') || globalConfig.socketUrl || apiBaseUrl || '').trim() || null;
+  if (params.get('clearBackend') === '1') {
+    writeStoredBackendUrl(null);
+  } else if (queryBackendUrl) {
+    writeStoredBackendUrl(queryBackendUrl);
+  }
+
+  const storedBackendUrl = readStoredBackendUrl();
+  const configuredBackendUrl = normalizeBaseUrl(globalConfig.backendUrl || '');
+  const fallbackBackendUrl = queryBackendUrl || configuredBackendUrl || storedBackendUrl || null;
+
+  const apiBaseUrl = queryApiUrl
+    || normalizeBaseUrl(globalConfig.apiBaseUrl || '')
+    || fallbackBackendUrl;
+
+  const socketUrl = querySocketUrl
+    || normalizeBaseUrl(globalConfig.socketUrl || '')
+    || fallbackBackendUrl
+    || apiBaseUrl;
+
   const stylizePreset = (params.get('look') || globalConfig.stylizePreset || 'soft').trim().toLowerCase();
+
+  if (typeof globalThis.location?.hostname === 'string'
+    && globalThis.location.hostname.endsWith('.github.io')
+    && !apiBaseUrl
+    && !socketUrl) {
+    console.warn(
+      '[Config] No backend configured on GitHub Pages. Add ?backend=https://<your-render-service>.onrender.com to the URL.'
+    );
+  }
 
   return {
     apiBaseUrl,

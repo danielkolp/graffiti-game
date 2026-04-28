@@ -100,5 +100,8 @@ This project can be hosted on GitHub Pages as a static frontend.
 - User site root: `https://danielkolp.github.io/` (repo name must be `danielkolp.github.io`).
 - Project site URL for this repo: `https://danielkolp.github.io/graffiti-game/`.
 - GitHub Pages does not host `server.js`; deploy backend separately for multiplayer persistence.
+- Configure backend on Pages with one URL open:
+  - `https://danielkolp.github.io/graffiti-game/?backend=https://YOUR-RENDER-SERVICE.onrender.com`
+  - This value is saved in `localStorage` and reused on next visits.
+  - To clear saved backend: `?clearBackend=1`
 - Pages workflow file: `.github/workflows/deploy-pages.yml`
-- Detailed setup: `DEPLOYMENT.md`

@@ -4,6 +4,10 @@ export class SocketManager {
     this.handlers = new Map();
     this.connected = false;
     this.ioLoadPromise = null;
+    this.ioScriptTimeoutMs = Number.isFinite(Number(options.ioScriptTimeoutMs))
+      ? Math.max(2000, Number(options.ioScriptTimeoutMs))
+      : 12000;
+    this.reconnectTimer = null;
     this.socketUrl = this._normalizeBaseUrl(options.socketUrl);
   }
 
@@ -33,6 +37,9 @@ export class SocketManager {
     const ioFactory = await this._getIoFactory();
     if (typeof ioFactory !== 'function') {
       this._emitLocal('connect_error', { error: new Error('Socket.IO client unavailable') });
+      if (this.socketUrl) {
+        this._scheduleReconnect();
+      }
       return;
     }
 
@@ -52,6 +59,7 @@ export class SocketManager {
 
       this.socket.on('connect', () => {
         this.connected = true;
+        this._clearReconnectTimer();
         this._emitLocal('connect', { id: this.socket.id });
       });
 
@@ -69,6 +77,7 @@ export class SocketManager {
       });
     } catch (error) {
       this._emitLocal('connect_error', { error });
+      this._scheduleReconnect();
     }
   }
 
@@ -83,9 +92,18 @@ export class SocketManager {
 
     if (!this.ioLoadPromise) {
       const scriptUrl = this._resolveSocketIoScriptUrl();
-      this.ioLoadPromise = this._loadIoScript(scriptUrl, 1200)
-        .then(() => (typeof globalThis.io === 'function' ? globalThis.io : null))
-        .catch(() => null);
+      this.ioLoadPromise = this._loadIoScript(scriptUrl, this.ioScriptTimeoutMs)
+        .then(() => {
+          if (typeof globalThis.io === 'function') {
+            return globalThis.io;
+          }
+          this.ioLoadPromise = null;
+          return null;
+        })
+        .catch(() => {
+          this.ioLoadPromise = null;
+          return null;
+        });
     }
 
     return this.ioLoadPromise;
@@ -156,6 +174,25 @@ export class SocketManager {
     }
 
     return trimmed.replace(/\/$/, '');
+  }
+
+  _scheduleReconnect(delayMs = 2500) {
+    if (this.socket || this.connected || this.reconnectTimer) {
+      return;
+    }
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this._connectInternal();
+    }, Math.max(800, Number(delayMs) || 2500));
+  }
+
+  _clearReconnectTimer() {
+    if (!this.reconnectTimer) {
+      return;
+    }
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   _emitLocal(event, payload) {

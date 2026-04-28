@@ -52074,6 +52074,8 @@
       this.handlers = /* @__PURE__ */ new Map();
       this.connected = false;
       this.ioLoadPromise = null;
+      this.ioScriptTimeoutMs = Number.isFinite(Number(options.ioScriptTimeoutMs)) ? Math.max(2e3, Number(options.ioScriptTimeoutMs)) : 12e3;
+      this.reconnectTimer = null;
       this.socketUrl = this._normalizeBaseUrl(options.socketUrl);
     }
     connect() {
@@ -52098,6 +52100,9 @@
       const ioFactory = await this._getIoFactory();
       if (typeof ioFactory !== "function") {
         this._emitLocal("connect_error", { error: new Error("Socket.IO client unavailable") });
+        if (this.socketUrl) {
+          this._scheduleReconnect();
+        }
         return;
       }
       try {
@@ -52112,6 +52117,7 @@
         this.socket = this.socketUrl ? ioFactory(this.socketUrl, connectionOptions) : ioFactory(connectionOptions);
         this.socket.on("connect", () => {
           this.connected = true;
+          this._clearReconnectTimer();
           this._emitLocal("connect", { id: this.socket.id });
         });
         this.socket.on("disconnect", (reason) => {
@@ -52126,6 +52132,7 @@
         });
       } catch (error) {
         this._emitLocal("connect_error", { error });
+        this._scheduleReconnect();
       }
     }
     async _getIoFactory() {
@@ -52137,7 +52144,16 @@
       }
       if (!this.ioLoadPromise) {
         const scriptUrl = this._resolveSocketIoScriptUrl();
-        this.ioLoadPromise = this._loadIoScript(scriptUrl, 1200).then(() => typeof globalThis.io === "function" ? globalThis.io : null).catch(() => null);
+        this.ioLoadPromise = this._loadIoScript(scriptUrl, this.ioScriptTimeoutMs).then(() => {
+          if (typeof globalThis.io === "function") {
+            return globalThis.io;
+          }
+          this.ioLoadPromise = null;
+          return null;
+        }).catch(() => {
+          this.ioLoadPromise = null;
+          return null;
+        });
       }
       return this.ioLoadPromise;
     }
@@ -52195,6 +52211,22 @@
         return null;
       }
       return trimmed.replace(/\/$/, "");
+    }
+    _scheduleReconnect(delayMs = 2500) {
+      if (this.socket || this.connected || this.reconnectTimer) {
+        return;
+      }
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        void this._connectInternal();
+      }, Math.max(800, Number(delayMs) || 2500));
+    }
+    _clearReconnectTimer() {
+      if (!this.reconnectTimer) {
+        return;
+      }
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
     _emitLocal(event, payload) {
       const callbacks = this.handlers.get(event);
@@ -53152,12 +53184,57 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
   };
 
   // public/main.js
+  var BACKEND_STORAGE_KEY = "graffiti-backend-url";
+  function normalizeBaseUrl(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    return trimmed.replace(/\/$/, "");
+  }
+  function readStoredBackendUrl() {
+    try {
+      return normalizeBaseUrl(globalThis.localStorage?.getItem(BACKEND_STORAGE_KEY) || "");
+    } catch {
+      return null;
+    }
+  }
+  function writeStoredBackendUrl(value) {
+    try {
+      const normalized = normalizeBaseUrl(value);
+      if (!normalized) {
+        globalThis.localStorage?.removeItem(BACKEND_STORAGE_KEY);
+        return;
+      }
+      globalThis.localStorage?.setItem(BACKEND_STORAGE_KEY, normalized);
+    } catch {
+    }
+  }
   function getRuntimeConfig() {
     const globalConfig = globalThis.__GRAFFITI_CONFIG || {};
     const params = new URLSearchParams(globalThis.location.search);
-    const apiBaseUrl = (params.get("api") || globalConfig.apiBaseUrl || "").trim() || null;
-    const socketUrl = (params.get("socket") || globalConfig.socketUrl || apiBaseUrl || "").trim() || null;
+    const queryBackendUrl = normalizeBaseUrl(params.get("backend") || "");
+    const queryApiUrl = normalizeBaseUrl(params.get("api") || "");
+    const querySocketUrl = normalizeBaseUrl(params.get("socket") || "");
+    if (params.get("clearBackend") === "1") {
+      writeStoredBackendUrl(null);
+    } else if (queryBackendUrl) {
+      writeStoredBackendUrl(queryBackendUrl);
+    }
+    const storedBackendUrl = readStoredBackendUrl();
+    const configuredBackendUrl = normalizeBaseUrl(globalConfig.backendUrl || "");
+    const fallbackBackendUrl = queryBackendUrl || configuredBackendUrl || storedBackendUrl || null;
+    const apiBaseUrl = queryApiUrl || normalizeBaseUrl(globalConfig.apiBaseUrl || "") || fallbackBackendUrl;
+    const socketUrl = querySocketUrl || normalizeBaseUrl(globalConfig.socketUrl || "") || fallbackBackendUrl || apiBaseUrl;
     const stylizePreset = (params.get("look") || globalConfig.stylizePreset || "soft").trim().toLowerCase();
+    if (typeof globalThis.location?.hostname === "string" && globalThis.location.hostname.endsWith(".github.io") && !apiBaseUrl && !socketUrl) {
+      console.warn(
+        "[Config] No backend configured on GitHub Pages. Add ?backend=https://<your-render-service>.onrender.com to the URL."
+      );
+    }
     return {
       apiBaseUrl,
       socketUrl,
