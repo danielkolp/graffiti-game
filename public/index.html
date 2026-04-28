@@ -52,9 +52,24 @@
   <div id="hud-root">
   
 
-    <div class="hud-block controls-block">
-      <img src="assets/controlstitle.png" alt="Controls" class="controls-title" />
-      <img src="assets/controls.png" alt="Control Layout" class="controls-image" />
+    <div id="controls-block" class="hud-block controls-block">
+      <div class="controls-header">
+        <h2 class="controls-title">Controls</h2>
+        <button id="controls-toggle-button" class="controls-toggle-button" type="button" aria-expanded="true">
+          Hide
+        </button>
+      </div>
+      <div id="controls-content" class="controls-content">
+        <div class="controls-row"><kbd>W A S D</kbd><span>Move</span></div>
+        <div class="controls-row"><kbd>Shift</kbd><span>Run</span></div>
+        <div class="controls-row"><kbd>E</kbd><span>Enter painting mode near a wall</span></div>
+        <div class="controls-row"><kbd>Mouse 1</kbd><span>Paint while in drawing mode</span></div>
+        <div class="controls-row"><kbd>Esc</kbd><span>Exit drawing mode or stop typing</span></div>
+        <div class="controls-row"><kbd>Enter</kbd><span>Send chat message while typing</span></div>
+        <div class="controls-row"><kbd>Ctrl+Z</kbd><span>Undo stroke in active paint patch</span></div>
+        <div class="controls-row"><kbd>Ctrl+Y</kbd><span>Redo stroke</span></div>
+        <div class="controls-row"><kbd>F3</kbd><span>Toggle diagnostics</span></div>
+      </div>
     </div>
 
     <div id="connection-status" class="hud-chip disconnected">Offline</div>

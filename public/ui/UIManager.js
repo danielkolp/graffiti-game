@@ -22,6 +22,9 @@ export class UIManager {
     this.drawHud = this.root.getElementById('draw-hud');
     this.chatInput = this.root.getElementById('chat-input');
     this.chatSendButton = this.root.getElementById('chat-send-button');
+    this.controlsBlock = this.root.getElementById('controls-block');
+    this.controlsContent = this.root.getElementById('controls-content');
+    this.controlsToggleButton = this.root.getElementById('controls-toggle-button');
 
     this.colorWheelWrap = this.root.getElementById('stroke-color-wheel-wrap');
     this.colorWheel = this.root.getElementById('stroke-color-wheel');
@@ -57,6 +60,7 @@ export class UIManager {
     this.chatTypingHandler = null;
     this.chatTyping = false;
     this.chatTypingIdleTimer = null;
+    this.controlsVisible = true;
     this._bindInputs();
   }
 
@@ -214,6 +218,7 @@ export class UIManager {
 
   _bindInputs() {
     this._bindIntroInputs();
+    this._bindControlsPanel();
 
     if (this.colorWheel && this.colorWheelCursor) {
       this._initColorWheel();
@@ -292,6 +297,45 @@ export class UIManager {
 
     this._syncColorPreview(this.brushColor);
     this._bindChatInputs();
+  }
+
+  _bindControlsPanel() {
+    if (!this.controlsBlock || !this.controlsToggleButton) {
+      return;
+    }
+
+    const storageKey = 'graffiti-controls-hidden';
+    let initiallyHidden = false;
+    try {
+      initiallyHidden = localStorage.getItem(storageKey) === '1';
+    } catch (_error) {
+      initiallyHidden = false;
+    }
+
+    const applyState = (visible, persist) => {
+      this.controlsVisible = visible === true;
+      this.controlsBlock.classList.toggle('controls-collapsed', !this.controlsVisible);
+      this.controlsToggleButton.textContent = this.controlsVisible ? 'Hide' : 'Show';
+      this.controlsToggleButton.setAttribute('aria-expanded', this.controlsVisible ? 'true' : 'false');
+      if (this.controlsContent) {
+        this.controlsContent.setAttribute('aria-hidden', this.controlsVisible ? 'false' : 'true');
+      }
+
+      if (!persist) {
+        return;
+      }
+
+      try {
+        localStorage.setItem(storageKey, this.controlsVisible ? '0' : '1');
+      } catch (_error) {
+        // Ignore storage write errors in restricted browsing contexts.
+      }
+    };
+
+    applyState(!initiallyHidden, false);
+    this.controlsToggleButton.addEventListener('click', () => {
+      applyState(!this.controlsVisible, true);
+    });
   }
 
   _bindIntroInputs() {
