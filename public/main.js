@@ -53,8 +53,19 @@ class GameApp {
     this.socketManager = null;
     this.syncSystem = null;
     this.runtimeConfig = getRuntimeConfig();
+    this.pendingPlayerColor = this.ui.getSelectedPlayerColor();
+    this.pendingPlayerName = this.ui.getSelectedPlayerName();
 
     this.boundTick = this._tick.bind(this);
+    this.ui.bindPlayerColorChange((colorHex) => {
+      this.pendingPlayerColor = colorHex;
+      if (this.playerController) {
+        this.playerController.setLocalPlayerColor(colorHex);
+      }
+      if (this.socketManager?.connected && this.playerController) {
+        this.socketManager.emit('player:update', this.playerController.getLocalNetworkState());
+      }
+    });
     this._bindStartOverlay();
     this._bindDebugToggle();
     this._exposeDebugApi();
@@ -85,6 +96,8 @@ class GameApp {
 
     this.playerController = new PlayerController(this.sceneManager.getScene(), this.sceneManager.loadingManager);
     await this.playerController.loadLocalPlayer();
+    this.playerController.setLocalPlayerColor(this.pendingPlayerColor);
+    this.playerController.setLocalPlayerName(this.pendingPlayerName);
     this.ui.setLoadingProgress(0.86, 'Preparing player');
 
     this.cameraController = new CameraController(this.camera);
@@ -135,7 +148,20 @@ class GameApp {
   }
 
   _bindStartOverlay() {
-    this.ui.bindStart(() => {
+    this.ui.bindStart(({ playerColor, playerName } = {}) => {
+      if (playerColor) {
+        this.pendingPlayerColor = playerColor;
+      }
+      if (playerName) {
+        this.pendingPlayerName = playerName;
+      }
+      if (this.playerController) {
+        this.playerController.setLocalPlayerColor(this.pendingPlayerColor);
+        this.playerController.setLocalPlayerName(this.pendingPlayerName);
+      }
+      if (this.socketManager?.connected && this.playerController) {
+        this.socketManager.emit('player:update', this.playerController.getLocalNetworkState());
+      }
       this.started = true;
     });
   }

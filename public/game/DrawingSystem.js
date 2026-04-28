@@ -88,8 +88,15 @@ this.activePreviewStrokeVisible = false;
     this.undoStack = [];
 this.redoStack = [];
     this.sendStrokeCallback = () => {};
+    this.sendStrokeLiveCallback = () => {};
     this.strokeCounter = 0;
     this.strokeRenderOrderCounter = 20;
+    this.liveStrokeCounter = 0;
+    this.activeLiveStrokeId = null;
+    this.activeStrokeStartedAt = 0;
+    this.lastLiveStrokeSendMs = 0;
+    this.liveStrokeSendIntervalMs = 70;
+    this.remoteLiveStrokeIndex = new Map();
     this.hasPointer = false;
 
     this.previewMesh = this._createPreviewMesh();
@@ -121,6 +128,10 @@ this.redoStack = [];
 
   setStrokeSendCallback(callback) {
     this.sendStrokeCallback = callback || (() => {});
+  }
+
+  setStrokeLiveSendCallback(callback) {
+    this.sendStrokeLiveCallback = callback || (() => {});
   }
 
   isDrawModeActive() {
@@ -295,7 +306,16 @@ this._rebuildBakedLayer(patch);
   }
 
   applyStrokePacket(packet) {
-    if (!packet || !packet.id || this.seenStrokeIds.has(packet.id)) {
+    if (!packet || !packet.id) {
+      return;
+    }
+
+    if (packet.live === true) {
+      this._applyLiveStrokePacket(packet);
+      return;
+    }
+
+    if (this.seenStrokeIds.has(packet.id)) {
       return;
     }
 
@@ -329,6 +349,10 @@ this._rebuildBakedLayer(patch);
 
     this._insertStroke(patch, stroke, false);
     this.seenStrokeIds.add(stroke.id);
+
+    if (packet.playerId && packet.liveId) {
+      this._clearRemoteLiveStroke(packet.playerId, packet.liveId);
+    }
   }
 
   _bindInput() {
@@ -388,7 +412,10 @@ window.addEventListener('keydown', (e) => {
       this.activeStroke = [localPoint];
       this.lastPaintPoint = localPoint;
       this.activePreviewPoint = this._createInitialPreviewPoint(localPoint);
+      this.activeLiveStrokeId = this._nextLiveStrokeId();
+      this.activeStrokeStartedAt = Date.now();
       this._updateActiveStrokeRenderable();
+      this._emitLiveStrokePacket();
     });
 
     domElement.addEventListener('pointermove', (event) => {
@@ -405,6 +432,8 @@ window.addEventListener('keydown', (e) => {
       if (!this.drawMode || !this.pointerDown) {
         this.pointerDown = false;
         this.activePointerId = null;
+        this._emitLiveStrokePacket(true);
+        this.activeLiveStrokeId = null;
         this._clearActiveStrokeRenderable();
         this.activePreviewPoint = null;
         return;
@@ -426,6 +455,8 @@ window.addEventListener('keydown', (e) => {
       if (this.uiManager.getTool() === 'erase') {
         this._clearActiveStrokeRenderable();
         this.activePreviewPoint = null;
+        this._emitLiveStrokePacket(true);
+        this.activeLiveStrokeId = null;
         return;
       }
 
@@ -438,6 +469,8 @@ window.addEventListener('keydown', (e) => {
       }
 
       if (finalizedPoints.length < 2 || !this.activePatch) {
+        this._emitLiveStrokePacket(true);
+        this.activeLiveStrokeId = null;
         this.activeStroke = [];
         this.lastPaintPoint = null;
         this.activePreviewPoint = null;
@@ -449,6 +482,8 @@ window.addEventListener('keydown', (e) => {
       const bounded = resamplePoints(simplified, this.maxPointsPerStroke);
 
       if (bounded.length < 2) {
+        this._emitLiveStrokePacket(true);
+        this.activeLiveStrokeId = null;
         this.activeStroke = [];
         this.lastPaintPoint = null;
         this.activePreviewPoint = null;
@@ -462,9 +497,12 @@ window.addEventListener('keydown', (e) => {
         thickness: clamp(this.uiManager.getBrushSize(), 1, 24),
         points: bounded,
         createdAt: Date.now(),
+        liveId: this.activeLiveStrokeId,
         renderOrder: this._nextStrokeRenderOrder()
       };
 
+      this._emitLiveStrokePacket(true);
+      this.activeLiveStrokeId = null;
       this._clearActiveStrokeRenderable();
       this._insertStroke(this.activePatch, stroke, true);
 
@@ -490,6 +528,8 @@ window.addEventListener('keydown', (e) => {
     this.pointerDown = false;
     this.activePointerId = null;
     this.activeStroke = [];
+    this.activeLiveStrokeId = null;
+    this.activeStrokeStartedAt = 0;
     this.lastPaintPoint = null;
     this.activePreviewPoint = null;
     this._clearActiveStrokeRenderable();
@@ -500,11 +540,14 @@ window.addEventListener('keydown', (e) => {
   }
 
   _exitDrawMode() {
+    this._emitLiveStrokePacket(true);
     this.drawMode = false;
     this.pointerDown = false;
     this.activePointerId = null;
     this.activePatch = null;
     this.activeStroke = [];
+    this.activeLiveStrokeId = null;
+    this.activeStrokeStartedAt = 0;
     this.lastPaintPoint = null;
     this.activePreviewPoint = null;
     this._clearActiveStrokeRenderable();
@@ -536,6 +579,10 @@ window.addEventListener('keydown', (e) => {
     this._updateActiveStrokeRenderable();
 
     if (!this.lastPaintPoint) {
+      if ((now - this.lastLiveStrokeSendMs) >= this.liveStrokeSendIntervalMs) {
+        this._emitLiveStrokePacket();
+        this.lastLiveStrokeSendMs = now;
+      }
       return;
     }
 
@@ -546,6 +593,11 @@ window.addEventListener('keydown', (e) => {
       this.lastPaintPoint = localPoint;
       this.activePreviewPoint = localPoint;
       this._updateActiveStrokeRenderable();
+    }
+
+    if ((now - this.lastLiveStrokeSendMs) >= this.liveStrokeSendIntervalMs) {
+      this._emitLiveStrokePacket();
+      this.lastLiveStrokeSendMs = now;
     }
   }
 
@@ -906,6 +958,7 @@ window.addEventListener('keydown', (e) => {
       group,
       liveStrokes: [],
       strokeArchive: new Map(),
+      liveStrokePreviews: new Map(),
       bakedLayer: null
     };
 
@@ -1179,6 +1232,12 @@ _renderPatchCanvas(patch, previewStroke = null) {
     this._drawStrokeToPatchCanvas(patch, stroke);
   }
 
+  if (patch.liveStrokePreviews?.size) {
+    for (const stroke of patch.liveStrokePreviews.values()) {
+      this._drawStrokeToPatchCanvas(patch, stroke);
+    }
+  }
+
   if (previewStroke) {
     this._drawStrokeToPatchCanvas(patch, previewStroke);
   }
@@ -1279,6 +1338,76 @@ _eraseAtPoint(localPoint) {
     }
   }
 
+  _applyLiveStrokePacket(packet) {
+    const playerId = packet.playerId || 'remote';
+    const liveId = `${playerId}:${packet.id}`;
+
+    if (packet.end === true) {
+      this._removeLiveStrokePreviewById(liveId);
+      return;
+    }
+
+    if (!packet.patch || !Array.isArray(packet.points)) {
+      return;
+    }
+
+    const patch = this._getOrCreatePatchFromPacket(packet.patchKey, packet.patch);
+    const points = this._decodePoints(packet.points, packet.q || this.quantization);
+    if (points.length < 2) {
+      return;
+    }
+
+    const stroke = {
+      id: liveId,
+      color: packet.color || '#ff3d3d',
+      thickness: clamp(Number(packet.thickness) || 6, 1, 24),
+      points,
+      createdAt: packet.createdAt || Date.now(),
+      playerId
+    };
+
+    patch.liveStrokePreviews.set(liveId, stroke);
+    this.remoteLiveStrokeIndex.set(liveId, patch.key);
+    this._ensureBakedLayer(patch);
+    this._renderPatchCanvas(patch);
+  }
+
+  _removeLiveStrokePreviewById(liveId) {
+    const patchKey = this.remoteLiveStrokeIndex.get(liveId);
+    if (!patchKey) {
+      return;
+    }
+
+    const patch = this.patches.get(patchKey);
+    if (patch?.liveStrokePreviews?.has(liveId)) {
+      patch.liveStrokePreviews.delete(liveId);
+      this._renderPatchCanvas(patch);
+    }
+
+    this.remoteLiveStrokeIndex.delete(liveId);
+  }
+
+  _clearRemoteLiveStroke(playerId, strokeId) {
+    if (!playerId || !strokeId) {
+      return;
+    }
+    this._removeLiveStrokePreviewById(`${playerId}:${strokeId}`);
+  }
+
+  clearRemoteLiveStrokesForPlayer(playerId) {
+    if (!playerId) {
+      return;
+    }
+
+    const prefix = `${playerId}:`;
+    const liveIds = Array.from(this.remoteLiveStrokeIndex.keys())
+      .filter((key) => key.startsWith(prefix));
+
+    for (const liveId of liveIds) {
+      this._removeLiveStrokePreviewById(liveId);
+    }
+  }
+
   _snapshotStrokeForUndo(stroke, patch) {
     return {
       id: stroke.id,
@@ -1359,26 +1488,79 @@ _rebuildBakedLayer(patch) {
     stroke.renderable = null;
   }
 
+  _nextLiveStrokeId() {
+    this.liveStrokeCounter += 1;
+    return `live-${Date.now().toString(36)}-${this.liveStrokeCounter.toString(36)}`;
+  }
+
+  _encodePatchPacket(patch) {
+    return {
+      key: patch.key,
+      meshId: patch.meshId,
+      center: [patch.center.x, patch.center.y, patch.center.z],
+      normal: [patch.normal.x, patch.normal.y, patch.normal.z],
+      tangent: [patch.tangent.x, patch.tangent.y, patch.tangent.z],
+      bitangent: [patch.bitangent.x, patch.bitangent.y, patch.bitangent.z],
+      halfSize: patch.halfSize,
+      halfWidth: patch.halfWidth,
+      halfHeight: patch.halfHeight,
+      minX: patch.minX,
+      maxX: patch.maxX,
+      minY: patch.minY,
+      maxY: patch.maxY
+    };
+  }
+
+  _emitLiveStrokePacket(end = false) {
+    if (!this.activeLiveStrokeId || !this.activePatch) {
+      return;
+    }
+
+    if (end) {
+      this.sendStrokeLiveCallback({
+        v: 1,
+        live: true,
+        id: this.activeLiveStrokeId,
+        patchKey: this.activePatch.key,
+        end: true,
+        createdAt: Date.now()
+      });
+      return;
+    }
+
+    const previewPoints = this.activeStroke.slice();
+    if (this.activePreviewPoint) {
+      const lastPoint = previewPoints[previewPoints.length - 1];
+      if (!lastPoint || lastPoint.x !== this.activePreviewPoint.x || lastPoint.y !== this.activePreviewPoint.y) {
+        previewPoints.push(this.activePreviewPoint);
+      }
+    }
+
+    if (previewPoints.length < 2) {
+      return;
+    }
+
+    this.sendStrokeLiveCallback({
+      v: 1,
+      live: true,
+      id: this.activeLiveStrokeId,
+      patchKey: this.activePatch.key,
+      patch: this._encodePatchPacket(this.activePatch),
+      color: this.uiManager.getBrushColor(),
+      thickness: clamp(this.uiManager.getBrushSize(), 1, 24),
+      q: this.quantization,
+      points: this._encodePoints(previewPoints, this.quantization),
+      createdAt: this.activeStrokeStartedAt || Date.now()
+    });
+  }
+
   _encodeStrokePacket(patch, stroke) {
     return {
       v: 1,
       id: stroke.id,
       patchKey: patch.key,
-      patch: {
-        key: patch.key,
-        meshId: patch.meshId,
-        center: [patch.center.x, patch.center.y, patch.center.z],
-        normal: [patch.normal.x, patch.normal.y, patch.normal.z],
-        tangent: [patch.tangent.x, patch.tangent.y, patch.tangent.z],
-        bitangent: [patch.bitangent.x, patch.bitangent.y, patch.bitangent.z],
-        halfSize: patch.halfSize,
-        halfWidth: patch.halfWidth,
-        halfHeight: patch.halfHeight,
-        minX: patch.minX,
-        maxX: patch.maxX,
-        minY: patch.minY,
-        maxY: patch.maxY
-      },
+      liveId: stroke.liveId || null,
+      patch: this._encodePatchPacket(patch),
       color: stroke.color,
       thickness: stroke.thickness,
       q: this.quantization,

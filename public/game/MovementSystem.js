@@ -237,7 +237,25 @@ export class MovementSystem {
   }
 
   _bindInput() {
+    const shouldIgnoreKeyInput = () => {
+      const active = document?.activeElement;
+      if (!active) {
+        return false;
+      }
+
+      const tag = String(active.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+        return true;
+      }
+
+      return active.isContentEditable === true;
+    };
+
     window.addEventListener('keydown', (event) => {
+      if (shouldIgnoreKeyInput()) {
+        return;
+      }
+
       switch (event.code) {
         case 'KeyW':
           this.input.forward = true;

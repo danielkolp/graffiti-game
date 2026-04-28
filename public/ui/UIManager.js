@@ -12,10 +12,16 @@ export class UIManager {
 
     this.instructionsOverlay = this.root.getElementById('instructions-overlay');
     this.startButton = this.root.getElementById('start-game-button');
+    this.playerNameInput = this.root.getElementById('player-name-input');
+    this.playerColorHexInput = this.root.getElementById('player-color-hex');
+    this.playerColorCodeLabel = this.root.getElementById('player-color-code');
+    this.playerColorSwatches = Array.from(this.root.querySelectorAll('.player-color-swatch'));
 
     this.connectionStatus = this.root.getElementById('connection-status');
     this.drawPrompt = this.root.getElementById('draw-prompt');
     this.drawHud = this.root.getElementById('draw-hud');
+    this.chatInput = this.root.getElementById('chat-input');
+    this.chatSendButton = this.root.getElementById('chat-send-button');
 
     this.colorWheelWrap = this.root.getElementById('stroke-color-wheel-wrap');
     this.colorWheel = this.root.getElementById('stroke-color-wheel');
@@ -44,6 +50,13 @@ export class UIManager {
     this.wheelDragging = false;
     this.drawModeActive = false;
     this.undoHandler = null;
+    this.selectedPlayerColor = '#1b69fa';
+    this.selectedPlayerName = 'Writer';
+    this.playerColorChangeHandler = null;
+    this.chatSendHandler = null;
+    this.chatTypingHandler = null;
+    this.chatTyping = false;
+    this.chatTypingIdleTimer = null;
     this._bindInputs();
   }
 
@@ -53,8 +66,32 @@ export class UIManager {
     }
     this.startButton.addEventListener('click', () => {
       this.instructionsOverlay?.classList.add('hidden');
-      handler();
+      handler({
+        playerColor: this.getSelectedPlayerColor(),
+        playerName: this.getSelectedPlayerName()
+      });
     });
+  }
+
+  bindPlayerColorChange(handler) {
+    this.playerColorChangeHandler = typeof handler === 'function' ? handler : null;
+  }
+
+  bindChat(sendHandler, typingHandler) {
+    this.chatSendHandler = typeof sendHandler === 'function' ? sendHandler : null;
+    this.chatTypingHandler = typeof typingHandler === 'function' ? typingHandler : null;
+  }
+
+  getSelectedPlayerColor() {
+    return this.selectedPlayerColor || '#1b69fa';
+  }
+
+  getSelectedPlayerName() {
+    return this.selectedPlayerName || 'Writer';
+  }
+
+  isChatFocused() {
+    return this.chatInput && document.activeElement === this.chatInput;
   }
 
   setLoadingProgress(progressRatio, label = 'Loading assets') {
@@ -176,6 +213,8 @@ export class UIManager {
   }
 
   _bindInputs() {
+    this._bindIntroInputs();
+
     if (this.colorWheel && this.colorWheelCursor) {
       this._initColorWheel();
     }
@@ -234,6 +273,10 @@ export class UIManager {
     }
 
     window.addEventListener('keydown', (event) => {
+      if (this.isChatFocused()) {
+        return;
+      }
+
       if (!this.drawModeActive) {
         return;
       }
@@ -248,6 +291,148 @@ export class UIManager {
     });
 
     this._syncColorPreview(this.brushColor);
+    this._bindChatInputs();
+  }
+
+  _bindIntroInputs() {
+    const sanitizeName = (value) => {
+      const collapsed = String(value || '').replace(/\s+/g, ' ').trim();
+      const trimmed = collapsed.slice(0, 18);
+      return trimmed || 'Writer';
+    };
+
+    const normalizeHex = (value) => {
+      const input = String(value || '').trim().toLowerCase();
+      if (/^#[0-9a-f]{6}$/.test(input)) {
+        return input;
+      }
+      return null;
+    };
+
+    if (this.playerNameInput) {
+      this.selectedPlayerName = sanitizeName(this.playerNameInput.value);
+      this.playerNameInput.value = this.selectedPlayerName;
+      this.playerNameInput.addEventListener('input', () => {
+        this.selectedPlayerName = sanitizeName(this.playerNameInput.value);
+      });
+      this.playerNameInput.addEventListener('blur', () => {
+        this.selectedPlayerName = sanitizeName(this.playerNameInput.value);
+        this.playerNameInput.value = this.selectedPlayerName;
+      });
+    }
+
+    const applyPlayerColor = (nextColor) => {
+      const normalized = normalizeHex(nextColor);
+      if (!normalized) {
+        return;
+      }
+
+      this.selectedPlayerColor = normalized;
+
+      if (this.playerColorHexInput && this.playerColorHexInput.value.toLowerCase() !== normalized) {
+        this.playerColorHexInput.value = normalized;
+      }
+      if (this.playerColorCodeLabel) {
+        this.playerColorCodeLabel.textContent = normalized;
+      }
+
+      for (const swatch of this.playerColorSwatches) {
+        swatch.classList.toggle('active', String(swatch.dataset.color || '').toLowerCase() === normalized);
+      }
+
+      if (this.playerColorChangeHandler) {
+        this.playerColorChangeHandler(normalized);
+      }
+    };
+
+    if (this.playerColorHexInput) {
+      const initial = normalizeHex(this.playerColorHexInput.value);
+      if (initial) {
+        this.selectedPlayerColor = initial;
+      }
+
+      this.playerColorHexInput.addEventListener('input', () => {
+        applyPlayerColor(this.playerColorHexInput.value);
+      });
+    }
+
+    for (const swatch of this.playerColorSwatches) {
+      swatch.addEventListener('click', () => {
+        applyPlayerColor(swatch.dataset.color || '');
+      });
+    }
+
+    applyPlayerColor(this.selectedPlayerColor);
+  }
+
+  _bindChatInputs() {
+    if (!this.chatInput || !this.chatSendButton) {
+      return;
+    }
+
+    const setTyping = (typing) => {
+      const next = typing === true;
+      if (this.chatTyping === next) {
+        return;
+      }
+      this.chatTyping = next;
+      if (this.chatTypingHandler) {
+        this.chatTypingHandler(next);
+      }
+    };
+
+    const scheduleTypingIdle = () => {
+      if (this.chatTypingIdleTimer) {
+        clearTimeout(this.chatTypingIdleTimer);
+      }
+      this.chatTypingIdleTimer = setTimeout(() => {
+        setTyping(false);
+      }, 900);
+    };
+
+    const sendCurrentMessage = () => {
+      const message = String(this.chatInput.value || '').trim();
+      if (!message) {
+        setTyping(false);
+        return;
+      }
+      if (this.chatSendHandler) {
+        this.chatSendHandler(message);
+      }
+      this.chatInput.value = '';
+      setTyping(false);
+    };
+
+    this.chatInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendCurrentMessage();
+        return;
+      }
+
+      if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
+        setTyping(true);
+        scheduleTypingIdle();
+      }
+    });
+
+    this.chatInput.addEventListener('input', () => {
+      if (this.chatInput.value.trim().length > 0) {
+        setTyping(true);
+        scheduleTypingIdle();
+      } else {
+        setTyping(false);
+      }
+    });
+
+    this.chatInput.addEventListener('blur', () => {
+      setTyping(false);
+    });
+
+    this.chatSendButton.addEventListener('click', () => {
+      sendCurrentMessage();
+      this.chatInput.focus();
+    });
   }
 
   _invokeUndo() {
@@ -577,4 +762,3 @@ export class UIManager {
     return { h, s, v: max };
   }
 }
-

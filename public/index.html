@@ -19,8 +19,32 @@
 
   <div id="instructions-overlay" class="overlay intro-overlay">
     <div class="intro-content">
-      <img src="assets/instructionstitle.png" alt="Instructions" class="intro-title" />
-      <img src="assets/instructions.png" alt="How to Play" class="intro-sheet" />
+      <div class="intro-story-panel">
+        <h1 class="intro-title">Graffiti Game</h1>
+        <p class="intro-lead">
+          Draw some stuff. Be creative. The city is your canvas, every wall up for grabs.
+        </p>
+        <div class="intro-player-style">
+          <div class="intro-player-name-row">
+            <label for="player-name-input">Name</label>
+            <input id="player-name-input" type="text" maxlength="18" value="Writer" />
+          </div>
+          <p class="intro-player-style-label">Choose Your Character Color</p>
+          <div id="player-color-swatches" class="player-color-swatches" role="radiogroup" aria-label="Player color selection">
+            <button type="button" class="player-color-swatch active" data-color="#1b69fa" aria-label="Blue" title="Blue"></button>
+            <button type="button" class="player-color-swatch" data-color="#ff5d73" aria-label="Coral" title="Coral"></button>
+            <button type="button" class="player-color-swatch" data-color="#4ade80" aria-label="Green" title="Green"></button>
+            <button type="button" class="player-color-swatch" data-color="#ffd166" aria-label="Gold" title="Gold"></button>
+            <button type="button" class="player-color-swatch" data-color="#b18bff" aria-label="Lavender" title="Lavender"></button>
+          </div>
+          <div class="intro-player-color-row">
+            <label for="player-color-hex">Custom</label>
+            <input id="player-color-hex" type="color" value="#1b69fa" />
+            <span id="player-color-code" class="player-color-code">#1b69fa</span>
+          </div>
+        </div>
+        <p class="intro-footnote">Use the Controls panel in the top-left at any time if you need a quick reminder.</p>
+      </div>
       <button id="start-game-button" class="primary-button">Start Session</button>
     </div>
   </div>
@@ -75,9 +99,23 @@
       </div>
     </div>
 
+    <div id="chat-hud" class="chat-hud">
+      <input id="chat-input" class="chat-input" type="text" maxlength="140" placeholder="Press Enter to chat..." />
+      <button id="chat-send-button" class="chat-send-button" type="button">Send</button>
+    </div>
+
     <div id="debug-panel" class="debug-panel">FPS 0 | Draw 0 | Triangles 0 | Memory n/a</div>
   </div>
 
+  <script>
+    window.__GRAFFITI_CONFIG = Object.assign(
+      {
+        apiBaseUrl: 'https://graffiti-game.onrender.com',
+        socketUrl: 'https://graffiti-game.onrender.com'
+      },
+      window.__GRAFFITI_CONFIG || {}
+    );
+  </script>
   <script>
     window.__graffitiBoot = { started: false };
     setTimeout(() => {

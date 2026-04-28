@@ -50,12 +50,17 @@ if (watchClient) {
   });
 }
 
-const STORAGE_ROOT = path.join(__dirname, 'drawings');
+const STORAGE_ROOT = process.env.DRAWINGS_DIR
+  ? path.resolve(process.env.DRAWINGS_DIR)
+  : path.join(__dirname, 'drawings');
 const STROKES_DIR = path.join(STORAGE_ROOT, 'strokes');
+const API_VERSION = 'strokes-v3-chat-profile';
 
 const MAX_STROKES = 12000;
 const MAX_POINTS_PER_STROKE = 320;
 const MAX_ERASE_TARGETS = 64;
+const MAX_CHAT_LENGTH = 140;
+const MAX_PLAYER_NAME_LENGTH = 18;
 
 const strokes = new Map();
 const players = new Map();
@@ -110,6 +115,16 @@ function sanitizePatch(patch) {
     bitangent,
     halfSize: clamp(halfSize, 0.5, 8)
   };
+}
+
+function sanitizeHexColor(value, fallback = '#1b69fa') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : fallback;
+}
+
+function sanitizePlayerName(value, fallback = 'Writer') {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_NAME_LENGTH);
+  return normalized || fallback;
 }
 
 function sanitizeStrokePacket(packet, playerId) {
@@ -177,6 +192,7 @@ function sanitizeStrokePacket(packet, playerId) {
   return {
     v: 1,
     id: packet.id,
+    liveId: typeof packet.liveId === 'string' ? packet.liveId : null,
     patchKey: packet.patchKey,
     patch,
     color,
@@ -185,6 +201,69 @@ function sanitizeStrokePacket(packet, playerId) {
     points,
     createdAt: Number(packet.createdAt) || Date.now(),
     playerId
+  };
+}
+
+function sanitizeLiveStrokePacket(packet, playerId) {
+  if (!packet || typeof packet !== 'object' || typeof packet.id !== 'string') {
+    return null;
+  }
+
+  const base = {
+    v: 1,
+    live: true,
+    id: packet.id,
+    patchKey: typeof packet.patchKey === 'string' ? packet.patchKey : '',
+    createdAt: Number(packet.createdAt) || Date.now(),
+    playerId
+  };
+
+  if (packet.end === true) {
+    return {
+      ...base,
+      end: true
+    };
+  }
+
+  if (!packet.patch || !Array.isArray(packet.points)) {
+    return null;
+  }
+
+  const patch = sanitizePatch(packet.patch);
+  if (!patch) {
+    return null;
+  }
+
+  if (packet.points.length < 4 || packet.points.length > MAX_POINTS_PER_STROKE * 2 || packet.points.length % 2 !== 0) {
+    return null;
+  }
+
+  const quantization = Number(packet.q);
+  if (!isFiniteNumber(quantization) || quantization <= 0 || quantization > 10000) {
+    return null;
+  }
+
+  const points = [];
+  for (let i = 0; i < packet.points.length; i += 1) {
+    const value = Number(packet.points[i]);
+    if (!Number.isInteger(value) || value < -32768 || value > 32767) {
+      return null;
+    }
+    points.push(value);
+  }
+
+  const color = typeof packet.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(packet.color)
+    ? packet.color
+    : '#ff3d3d';
+  const thickness = clamp(Number(packet.thickness) || 6, 1, 24);
+
+  return {
+    ...base,
+    patch,
+    color,
+    thickness,
+    q: quantization,
+    points
   };
 }
 
@@ -197,6 +276,10 @@ function sanitizePlayerState(payload, socketId) {
   const y = Number(payload.position.y);
   const z = Number(payload.position.z);
   const rotationY = Number(payload.rotationY) || 0;
+  const previousColor = players.get(socketId)?.color || '#1b69fa';
+  const previousName = players.get(socketId)?.name || 'Writer';
+  const color = sanitizeHexColor(payload.color, previousColor);
+  const name = sanitizePlayerName(payload.name, previousName);
 
   if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(z)) {
     return null;
@@ -210,8 +293,23 @@ function sanitizePlayerState(payload, socketId) {
       z: clamp(z, -5000, 5000)
     },
     rotationY,
+    color,
+    name,
     timestamp: Date.now()
   };
+}
+
+function sanitizeChatMessage(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const message = String(payload.message || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_CHAT_LENGTH);
+
+  return message || null;
 }
 
 function strokePath(strokeId) {
@@ -318,8 +416,18 @@ function getSerializableStrokes() {
 app.get('/api/status', (req, res) => {
   res.json({
     status: 'running',
+    apiVersion: API_VERSION,
+    features: {
+      chat: true,
+      playerProfile: true,
+      liveStroke: true
+    },
+    drawingsCount: strokes.size,
+    drawingsList: Array.from(strokes.keys()),
     strokes: strokes.size,
-    players: players.size
+    players: players.size,
+    storageRoot: STORAGE_ROOT,
+    strokesDir: STROKES_DIR
   });
 });
 
@@ -357,6 +465,27 @@ app.post('/api/strokes', async (req, res) => {
 
 app.get('/api/drawings', (req, res) => {
   res.json(getSerializableStrokes());
+});
+
+// Backward-compatible alias for older clients.
+app.post('/api/drawings', async (req, res) => {
+  const stroke = sanitizeStrokePacket(req.body, 'rest');
+  if (!stroke || stroke.erase) {
+    res.status(400).json({ error: 'Invalid stroke payload' });
+    return;
+  }
+
+  if (strokes.has(stroke.id)) {
+    res.status(200).json({ ok: true, deduped: true });
+    return;
+  }
+
+  strokes.set(stroke.id, stroke);
+  await saveStrokeToDisk(stroke);
+  await pruneStrokeCacheIfNeeded();
+
+  io.emit('stroke:add', stroke);
+  res.status(201).json({ ok: true });
 });
 
 io.on('connection', (socket) => {
@@ -414,8 +543,39 @@ io.on('connection', (socket) => {
     io.emit('stroke:add', packet);
   });
 
+  socket.on('stroke:live', (payload) => {
+    const packet = sanitizeLiveStrokePacket(payload, socket.id);
+    if (!packet) {
+      return;
+    }
+
+    socket.broadcast.emit('stroke:live', packet);
+  });
+
+  socket.on('chat:message', (payload) => {
+    const message = sanitizeChatMessage(payload);
+    if (!message) {
+      return;
+    }
+
+    io.emit('chat:message', {
+      id: socket.id,
+      message,
+      createdAt: Date.now()
+    });
+  });
+
+  socket.on('chat:typing', (payload) => {
+    const typing = payload?.typing === true;
+    socket.broadcast.emit('chat:typing', {
+      id: socket.id,
+      typing
+    });
+  });
+
   socket.on('disconnect', () => {
     players.delete(socket.id);
+    io.emit('chat:typing', { id: socket.id, typing: false });
     io.emit('player:leave', { id: socket.id });
     console.log(`Socket disconnected: ${socket.id}`);
   });
@@ -434,6 +594,9 @@ server.on('error', (error) => {
       console.log(`Server running on http://127.0.0.1:${PORT}`);
       console.log(`Open client at http://127.0.0.1:${PORT}/public/index.html`);
       console.log(`Persisted strokes: ${strokes.size}`);
+      console.log(`API mode: ${API_VERSION}`);
+      console.log(`Storage root: ${STORAGE_ROOT}`);
+      console.log(`Strokes dir: ${STROKES_DIR}`);
     });
   } catch (error) {
     console.error('Startup failed:', error);

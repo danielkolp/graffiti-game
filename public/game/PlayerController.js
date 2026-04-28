@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three/build/three.module.js';
 import { GLTFLoader } from '../vendor/three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from '../vendor/three/examples/jsm/utils/SkeletonUtils.js';
 import { clamp, damp } from '../utils/math.js';
 
 const PLAYABLE_STATES = ['idle', 'walk', 'run'];
@@ -12,6 +13,11 @@ const PLAYER_MODEL_CANDIDATES = [
   '/models/idkbro.glb'
 ];
 const PLAYER_LOAD_TIMEOUT_MS = 15000;
+const DEFAULT_PLAYER_COLOR = '#1b69fa';
+const DEFAULT_PLAYER_NAME = 'Writer';
+const CHAT_BUBBLE_DURATION_MS = 5000;
+const CHAT_BUBBLE_MAX_CHARS = 140;
+const PLAYER_NAME_MAX_CHARS = 18;
 
 function normalizeAngle(value) {
   let angle = value;
@@ -61,12 +67,31 @@ function isAnimationDebugEnabled() {
   return params.get('animDebug') === '1';
 }
 
-function buildFallbackCharacter() {
+function normalizeHexColor(value, fallback = DEFAULT_PLAYER_COLOR) {
+  const input = String(value || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(input) ? input : fallback;
+}
+
+function lightenHexColor(hexColor, mix = 0.45) {
+  const safe = normalizeHexColor(hexColor);
+  const base = new THREE.Color(safe);
+  const out = base.clone().lerp(new THREE.Color('#ffffff'), clamp(mix, 0, 1));
+  return `#${out.getHexString()}`;
+}
+
+function sanitizePlayerName(value, fallback = DEFAULT_PLAYER_NAME) {
+  const collapsed = String(value || '').replace(/\s+/g, ' ').trim().slice(0, PLAYER_NAME_MAX_CHARS);
+  return collapsed || fallback;
+}
+
+function buildFallbackCharacter(baseColor = DEFAULT_PLAYER_COLOR) {
+  const safeBase = normalizeHexColor(baseColor);
+  const headColor = lightenHexColor(safeBase, 0.56);
   const group = new THREE.Group();
 
   const body = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.38, 1.05, 8, 16),
-    new THREE.MeshStandardMaterial({ color: 0x1b69fa, roughness: 0.72, metalness: 0.08 })
+    new THREE.MeshStandardMaterial({ color: safeBase, roughness: 0.72, metalness: 0.08 })
   );
   body.castShadow = true;
   body.receiveShadow = false;
@@ -75,7 +100,7 @@ function buildFallbackCharacter() {
 
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(0.25, 16, 16),
-    new THREE.MeshStandardMaterial({ color: 0x9ec1ff, roughness: 0.8, metalness: 0.04 })
+    new THREE.MeshStandardMaterial({ color: headColor, roughness: 0.8, metalness: 0.04 })
   );
   head.position.set(0, 1.95, 0);
   head.castShadow = true;
@@ -89,16 +114,21 @@ class RemotePlayerPool {
     this.available = [];
   }
 
-  acquire() {
+  acquire(baseColor = DEFAULT_PLAYER_COLOR) {
     if (this.available.length > 0) {
-      return this.available.pop();
+      const reused = this.available.pop();
+      const mesh = reused.children[0];
+      if (mesh?.material?.color) {
+        mesh.material.color.set(normalizeHexColor(baseColor));
+      }
+      return reused;
     }
 
     const root = new THREE.Group();
     const mesh = new THREE.Mesh(
       new THREE.CapsuleGeometry(0.35, 1.05, 8, 16),
       new THREE.MeshStandardMaterial({
-        color: 0x5f8ad8,
+        color: normalizeHexColor(baseColor),
         roughness: 0.75,
         metalness: 0.05
       })
@@ -167,9 +197,25 @@ export class PlayerController {
 
     this.tempQuat = new THREE.Quaternion();
     this.tempForward = new THREE.Vector3();
+    this.tempWorldAnchor = new THREE.Vector3();
+    this.tempBounds = new THREE.Box3();
+    this.tempBoundsSize = new THREE.Vector3();
 
     this.remotePlayers = new Map();
     this.remotePool = new RemotePlayerPool();
+    this.remoteStateOrder = ['idle', 'walk', 'run'];
+    this.remoteClipMap = {};
+    this.remoteTemplateReady = false;
+    this.tempRemotePrevPos = new THREE.Vector3();
+    this.localPlayerColor = DEFAULT_PLAYER_COLOR;
+    this.localPlayerName = DEFAULT_PLAYER_NAME;
+    this.localPlayerId = null;
+    this.localChatBubble = null;
+    this.localNameTag = null;
+    this.pendingRemoteChat = new Map();
+    this.pendingRemoteTyping = new Map();
+    this.pendingRemoteColors = new Map();
+    this.pendingRemoteNames = new Map();
   }
 
   getLocalPlayer() {
@@ -184,8 +230,76 @@ export class PlayerController {
         z: this.localPlayer.position.z
       },
       rotationY: this.localPlayer.rotation.y,
+      color: this.localPlayerColor,
+      name: this.localPlayerName,
       timestamp: Date.now()
     };
+  }
+
+  setLocalPlayerId(playerId) {
+    this.localPlayerId = playerId || null;
+  }
+
+  setLocalPlayerColor(colorHex) {
+    this.localPlayerColor = normalizeHexColor(colorHex);
+    if (this.localVisual) {
+      this._applyColorToVisual(this.localVisual, this.localPlayerColor);
+    }
+  }
+
+  setLocalPlayerName(name) {
+    this.localPlayerName = sanitizePlayerName(name);
+    this._setNameTagText(this.localNameTag, this.localPlayerName);
+  }
+
+  setLocalChatMessage(message, durationMs = CHAT_BUBBLE_DURATION_MS) {
+    this._setChatBubbleMessage(this.localChatBubble, message, durationMs);
+  }
+
+  setLocalTyping(typing) {
+    this._setChatBubbleTyping(this.localChatBubble, typing === true);
+  }
+
+  setRemoteChatMessage(playerId, message, durationMs = CHAT_BUBBLE_DURATION_MS) {
+    const remote = this.remotePlayers.get(playerId);
+    if (!remote) {
+      this.pendingRemoteChat.set(playerId, {
+        message: String(message || '').trim().slice(0, CHAT_BUBBLE_MAX_CHARS),
+        durationMs
+      });
+      return;
+    }
+    this._setChatBubbleMessage(remote.chatBubble, message, durationMs);
+  }
+
+  setRemoteTyping(playerId, typing) {
+    const remote = this.remotePlayers.get(playerId);
+    if (!remote) {
+      this.pendingRemoteTyping.set(playerId, typing === true);
+      return;
+    }
+    this._setChatBubbleTyping(remote.chatBubble, typing === true);
+  }
+
+  setRemotePlayerName(playerId, name) {
+    const remote = this.remotePlayers.get(playerId);
+    const safe = sanitizePlayerName(name);
+    if (!remote) {
+      this.pendingRemoteNames.set(playerId, safe);
+      return;
+    }
+    remote.name = safe;
+    this._setNameTagText(remote.nameTag, safe);
+  }
+
+  setRemotePlayerColor(playerId, colorHex) {
+    const remote = this.remotePlayers.get(playerId);
+    const safe = normalizeHexColor(colorHex);
+    if (!remote) {
+      this.pendingRemoteColors.set(playerId, safe);
+      return;
+    }
+    this._setRemotePlayerColor(remote, safe);
   }
 
   async loadLocalPlayer() {
@@ -212,27 +326,36 @@ export class PlayerController {
 
         const materials = Array.isArray(node.material) ? node.material : [node.material];
         for (const material of materials) {
-          if (material.color) {
-            material.color.setHex(0x1b69fa);
-          }
           if (material.isMeshStandardMaterial) {
             material.roughness = 0.68;
             material.metalness = 0.08;
           }
         }
       });
+      this._isolateVisualMaterials(this.localVisual);
+      this._applyColorToVisual(this.localVisual, this.localPlayerColor);
 
       this.localPlayer.add(this.localVisual);
+      this.localPlayer.userData.labelAnchorY = this._estimateLabelAnchorY(this.localPlayer);
+      this.localChatBubble = this._attachChatBubble(this.localPlayer);
+      this.localNameTag = this._attachNameTag(this.localPlayer);
+      this._setNameTagText(this.localNameTag, this.localPlayerName);
       this.facingReferenceNode = this._findFacingReferenceNode();
       this.facingCalibrated = false;
       this.alignmentPending = true;
       this._resetFacingAlignmentSampling();
       this._setupAnimations(gltf.animations || []);
+      this._prepareRemoteTemplate(gltf.animations || []);
+      this._upgradeRemotePlayersToModel();
     } catch (error) {
       console.error('Failed to load player model, using fallback:', error);
-      this.localVisual = buildFallbackCharacter();
+      this.localVisual = buildFallbackCharacter(this.localPlayerColor);
       this.localVisual.position.set(0, this.visualOffsetY, 0);
       this.localPlayer.add(this.localVisual);
+      this.localPlayer.userData.labelAnchorY = this._estimateLabelAnchorY(this.localPlayer);
+      this.localChatBubble = this._attachChatBubble(this.localPlayer);
+      this.localNameTag = this._attachNameTag(this.localPlayer);
+      this._setNameTagText(this.localNameTag, this.localPlayerName);
     }
   }
 
@@ -285,24 +408,36 @@ export class PlayerController {
     this._autoAlignFacing(input);
     this._updateMovementRotation(input, dt, options.drawMode === true);
     this._updateRemotePlayers(dt);
+    this._updateChatBubble(this.localChatBubble, Date.now());
+    this._updateLabelAnchors();
   }
 
   upsertRemotePlayer(playerId, snapshot) {
     let remote = this.remotePlayers.get(playerId);
 
     if (!remote) {
-      const object3D = this.remotePool.acquire();
-      object3D.visible = true;
-      this.scene.add(object3D);
-
-      remote = {
-        id: playerId,
-        object3D,
-        targetPosition: new THREE.Vector3(),
-        targetRotationY: 0,
-        lastSeen: Date.now()
-      };
+      remote = this._createRemotePlayerInstance(playerId, snapshot);
+      remote.object3D.visible = true;
+      if (snapshot?.position) {
+        remote.object3D.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+        remote.targetPosition.copy(remote.object3D.position);
+      }
+      if (typeof snapshot?.rotationY === 'number') {
+        remote.object3D.rotation.y = snapshot.rotationY;
+        remote.targetRotationY = snapshot.rotationY;
+      }
+      if (typeof snapshot?.color === 'string') {
+        remote.color = normalizeHexColor(snapshot.color);
+      }
+      if (typeof snapshot?.name === 'string') {
+        remote.name = sanitizePlayerName(snapshot.name);
+      }
+      remote.lastPosition.copy(remote.object3D.position);
+      remote.lastUpdateAt = Date.now();
+      remote.estimatedSpeed = 0;
+      this.scene.add(remote.object3D);
       this.remotePlayers.set(playerId, remote);
+      this._applyPendingRemoteUi(playerId, remote);
     }
 
     if (snapshot.position) {
@@ -310,6 +445,13 @@ export class PlayerController {
     }
     if (typeof snapshot.rotationY === 'number') {
       remote.targetRotationY = snapshot.rotationY;
+    }
+    if (typeof snapshot.color === 'string') {
+      this._setRemotePlayerColor(remote, snapshot.color);
+    }
+    if (typeof snapshot.name === 'string') {
+      remote.name = sanitizePlayerName(snapshot.name);
+      this._setNameTagText(remote.nameTag, remote.name);
     }
     remote.lastSeen = Date.now();
   }
@@ -321,19 +463,322 @@ export class PlayerController {
     }
 
     this.scene.remove(remote.object3D);
-    this.remotePool.release(remote.object3D);
+    if (remote.usesFallback) {
+      this.remotePool.release(remote.object3D);
+    }
     this.remotePlayers.delete(playerId);
+  }
+
+  _applyPendingRemoteUi(playerId, remote) {
+    if (!remote) {
+      return;
+    }
+
+    if (this.pendingRemoteColors.has(playerId)) {
+      const color = this.pendingRemoteColors.get(playerId);
+      this._setRemotePlayerColor(remote, color);
+      this.pendingRemoteColors.delete(playerId);
+    }
+
+    if (this.pendingRemoteNames.has(playerId)) {
+      const name = this.pendingRemoteNames.get(playerId);
+      remote.name = sanitizePlayerName(name);
+      this._setNameTagText(remote.nameTag, remote.name);
+      this.pendingRemoteNames.delete(playerId);
+    }
+
+    if (this.pendingRemoteTyping.has(playerId)) {
+      this._setChatBubbleTyping(remote.chatBubble, this.pendingRemoteTyping.get(playerId) === true);
+      this.pendingRemoteTyping.delete(playerId);
+    }
+
+    if (this.pendingRemoteChat.has(playerId)) {
+      const pending = this.pendingRemoteChat.get(playerId);
+      if (pending?.message) {
+        this._setChatBubbleMessage(remote.chatBubble, pending.message, pending.durationMs);
+      }
+      this.pendingRemoteChat.delete(playerId);
+    }
   }
 
   _updateRemotePlayers(deltaSeconds) {
     const now = Date.now();
     for (const [playerId, remote] of this.remotePlayers.entries()) {
+      this.tempRemotePrevPos.copy(remote.object3D.position);
       remote.object3D.position.lerp(remote.targetPosition, 1 - Math.exp(-12 * deltaSeconds));
       remote.object3D.rotation.y = damp(remote.object3D.rotation.y, remote.targetRotationY, 12, deltaSeconds);
+
+      const movedDistance = remote.object3D.position.distanceTo(this.tempRemotePrevPos);
+      const frameSpeed = movedDistance / Math.max(0.0001, deltaSeconds);
+      remote.estimatedSpeed = damp(remote.estimatedSpeed || 0, frameSpeed, 8, deltaSeconds);
+      this._updateRemoteAnimation(remote, deltaSeconds);
+      this._updateChatBubble(remote.chatBubble, now);
 
       if (now - remote.lastSeen > 15000) {
         this.removeRemotePlayer(playerId);
       }
+    }
+  }
+
+  _prepareRemoteTemplate(clips) {
+    const clipMap = this._resolveAnimationClips(clips);
+    const remoteClipMap = {};
+
+    for (const stateName of this.remoteStateOrder) {
+      const sourceClip = clipMap[stateName];
+      if (!sourceClip) {
+        continue;
+      }
+
+      const preprocessed = this._preprocessClip(sourceClip, `remote_${stateName}`);
+      if (!preprocessed) {
+        continue;
+      }
+
+      remoteClipMap[stateName] = preprocessed;
+    }
+
+    this.remoteClipMap = remoteClipMap;
+    this.remoteTemplateReady = !!this.localVisual;
+  }
+
+  _createRemotePlayerInstance(playerId, snapshot = null) {
+    let object3D = null;
+    let usesFallback = false;
+    const desiredColor = normalizeHexColor(snapshot?.color || this.pendingRemoteColors.get(playerId) || this.localPlayerColor);
+    const desiredName = sanitizePlayerName(snapshot?.name || this.pendingRemoteNames.get(playerId) || DEFAULT_PLAYER_NAME);
+
+    if (this.remoteTemplateReady && this.localVisual) {
+      try {
+        const root = new THREE.Group();
+        root.name = `RemotePlayer-${playerId}`;
+        const visual = cloneSkeleton(this.localVisual);
+        visual.position.set(0, this.visualOffsetY, 0);
+        visual.rotation.set(0, 0, 0);
+        this._isolateVisualMaterials(visual);
+        root.add(visual);
+        object3D = root;
+      } catch (error) {
+        console.warn('Remote player model clone failed, falling back to capsule:', error);
+      }
+    }
+
+    if (!object3D) {
+      object3D = this.remotePool.acquire(desiredColor);
+      usesFallback = true;
+    }
+
+    const remote = {
+      id: playerId,
+      object3D,
+      targetPosition: new THREE.Vector3(),
+      targetRotationY: 0,
+      lastSeen: Date.now(),
+      mixer: null,
+      actions: {},
+      currentState: 'idle',
+      estimatedSpeed: 0,
+      lastPosition: new THREE.Vector3(),
+      lastUpdateAt: Date.now(),
+      color: desiredColor,
+      name: desiredName,
+      chatBubble: this._attachChatBubble(object3D),
+      nameTag: this._attachNameTag(object3D),
+      labelAnchorY: this._estimateLabelAnchorY(object3D),
+      usesFallback
+    };
+    object3D.userData.labelAnchorY = remote.labelAnchorY;
+    this._resetChatBubble(remote.chatBubble);
+    this._setNameTagText(remote.nameTag, remote.name);
+
+    if (!usesFallback) {
+      this._initRemoteAnimationRig(remote);
+      this._setRemotePlayerColor(remote, desiredColor);
+    }
+
+    return remote;
+  }
+
+  _initRemoteAnimationRig(remote) {
+    if (!remote || !remote.object3D || remote.usesFallback) {
+      return;
+    }
+
+    const visual = remote.object3D.children[0] || null;
+    if (!visual) {
+      return;
+    }
+
+    const mixer = new THREE.AnimationMixer(visual);
+    const actions = {};
+
+    for (const stateName of this.remoteStateOrder) {
+      const clip = this.remoteClipMap[stateName];
+      if (!clip) {
+        continue;
+      }
+
+      const action = mixer.clipAction(clip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.clampWhenFinished = false;
+      action.enabled = true;
+      action.setEffectiveWeight(1);
+      action.setEffectiveTimeScale(1);
+      actions[stateName] = action;
+    }
+
+    remote.mixer = mixer;
+    remote.actions = actions;
+    remote.currentState = actions.idle ? 'idle' : (actions.walk ? 'walk' : (actions.run ? 'run' : 'idle'));
+
+    const initialAction = actions[remote.currentState] || Object.values(actions)[0] || null;
+    if (initialAction) {
+      initialAction.reset().play();
+    }
+  }
+
+  _setRemotePlayerColor(remote, colorHex) {
+    if (!remote || !remote.object3D) {
+      return;
+    }
+
+    const safe = normalizeHexColor(colorHex);
+    remote.color = safe;
+
+    if (remote.usesFallback) {
+      const mesh = remote.object3D.children[0];
+      if (mesh?.material?.color) {
+        mesh.material.color.set(safe);
+      }
+      return;
+    }
+
+    const visual = remote.object3D.children[0];
+    if (visual) {
+      this._applyColorToVisual(visual, safe);
+    }
+  }
+
+  _estimateLabelAnchorY(ownerObject3D) {
+    if (!ownerObject3D) {
+      return 3.6;
+    }
+
+    const visual = ownerObject3D.children?.[0] || ownerObject3D;
+    this.tempBounds.setFromObject(visual);
+    this.tempBounds.getSize(this.tempBoundsSize);
+
+    const height = Number.isFinite(this.tempBoundsSize.y) && this.tempBoundsSize.y > 0.1
+      ? this.tempBoundsSize.y
+      : 2.2;
+
+    return clamp(height + 0.9, 2.8, 6.8);
+  }
+
+  _setRemoteState(remote, nextState) {
+    if (!remote || !remote.actions) {
+      return;
+    }
+
+    const playable = remote.actions[nextState]
+      ? nextState
+      : (remote.actions.walk ? 'walk' : (remote.actions.idle ? 'idle' : (remote.actions.run ? 'run' : null)));
+
+    if (!playable || playable === remote.currentState) {
+      return;
+    }
+
+    const fromAction = remote.actions[remote.currentState] || null;
+    const toAction = remote.actions[playable] || null;
+    if (!toAction) {
+      return;
+    }
+
+    const fade = 0.16;
+    if (fromAction) {
+      fromAction.fadeOut(fade);
+    }
+
+    toAction.reset().setEffectiveWeight(1).fadeIn(fade).play();
+    remote.currentState = playable;
+  }
+
+  _updateRemoteAnimation(remote, deltaSeconds) {
+    if (!remote || !remote.mixer || !remote.actions) {
+      return;
+    }
+
+    let nextState = 'idle';
+    if ((remote.estimatedSpeed || 0) > 5.2) {
+      nextState = 'run';
+    } else if ((remote.estimatedSpeed || 0) > 0.3) {
+      nextState = 'walk';
+    }
+
+    this._setRemoteState(remote, nextState);
+
+    const action = remote.actions[remote.currentState];
+    if (action) {
+      if (remote.currentState === 'walk') {
+        action.setEffectiveTimeScale(clamp((remote.estimatedSpeed || 0) / this.walkReferenceSpeed, 0.7, 1.35));
+      } else if (remote.currentState === 'run') {
+        action.setEffectiveTimeScale(clamp((remote.estimatedSpeed || 0) / this.runReferenceSpeed, 0.7, 1.35));
+      } else {
+        action.setEffectiveTimeScale(1);
+      }
+    }
+
+    remote.mixer.update(deltaSeconds);
+  }
+
+  _upgradeRemotePlayersToModel() {
+    if (!this.remoteTemplateReady || this.remotePlayers.size === 0) {
+      return;
+    }
+
+    for (const [playerId, remote] of this.remotePlayers.entries()) {
+      if (!remote.usesFallback) {
+        continue;
+      }
+
+      const snapshot = {
+        position: {
+          x: remote.object3D.position.x,
+          y: remote.object3D.position.y,
+          z: remote.object3D.position.z
+        },
+        rotationY: remote.object3D.rotation.y,
+        color: remote.color,
+        name: remote.name
+      };
+
+      this.scene.remove(remote.object3D);
+      this.remotePool.release(remote.object3D);
+
+      const upgraded = this._createRemotePlayerInstance(playerId, snapshot);
+      upgraded.targetPosition.copy(remote.targetPosition);
+      upgraded.targetRotationY = remote.targetRotationY;
+      upgraded.lastSeen = remote.lastSeen;
+      upgraded.estimatedSpeed = remote.estimatedSpeed || 0;
+      if (remote.chatBubble) {
+        upgraded.chatBubble.message = remote.chatBubble.message || '';
+        upgraded.chatBubble.typing = remote.chatBubble.typing === true;
+        upgraded.chatBubble.expiresAt = Number(remote.chatBubble.expiresAt) || 0;
+        if (upgraded.chatBubble.typing) {
+          this._drawChatBubble(upgraded.chatBubble, '...');
+          upgraded.chatBubble.sprite.visible = true;
+        } else if (upgraded.chatBubble.message && upgraded.chatBubble.expiresAt > Date.now()) {
+          this._drawChatBubble(upgraded.chatBubble, upgraded.chatBubble.message);
+          upgraded.chatBubble.sprite.visible = true;
+        }
+      }
+      upgraded.object3D.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+      upgraded.object3D.rotation.y = snapshot.rotationY;
+      upgraded.lastPosition.copy(upgraded.object3D.position);
+      upgraded.labelAnchorY = this._estimateLabelAnchorY(upgraded.object3D);
+      upgraded.object3D.userData.labelAnchorY = upgraded.labelAnchorY;
+      this.scene.add(upgraded.object3D);
+      this.remotePlayers.set(playerId, upgraded);
     }
   }
 
@@ -874,5 +1319,350 @@ export class PlayerController {
     this.alignmentSampleCount = 0;
     this.alignmentOffsetSinSum = 0;
     this.alignmentOffsetCosSum = 0;
+  }
+
+  _isolateVisualMaterials(root) {
+    if (!root) {
+      return;
+    }
+
+    root.traverse((node) => {
+      if (!node?.isMesh || !node.material) {
+        return;
+      }
+
+      if (Array.isArray(node.material)) {
+        node.material = node.material.map((material) => (material?.clone ? material.clone() : material));
+      } else if (node.material?.clone) {
+        node.material = node.material.clone();
+      }
+    });
+  }
+
+  _applyColorToVisual(root, colorHex) {
+    const safe = normalizeHexColor(colorHex);
+    const accent = lightenHexColor(safe, 0.38);
+    let meshIndex = 0;
+
+    root.traverse((node) => {
+      if (!node?.isMesh || !node.material) {
+        return;
+      }
+
+      const materials = Array.isArray(node.material) ? node.material : [node.material];
+      for (const material of materials) {
+        if (!material?.color) {
+          continue;
+        }
+
+        material.color.set(meshIndex === 0 ? safe : accent);
+        meshIndex += 1;
+      }
+    });
+  }
+
+  _attachChatBubble(ownerObject3D) {
+    if (!ownerObject3D) {
+      return null;
+    }
+
+    if (ownerObject3D.userData?.chatBubble) {
+      return ownerObject3D.userData.chatBubble;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 192;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return null;
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false
+    });
+
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(0, 4.6, 0);
+    sprite.scale.set(6.2, 2.45, 1);
+    sprite.renderOrder = 3000;
+    sprite.visible = false;
+    ownerObject3D.add(sprite);
+
+    const bubble = {
+      canvas,
+      ctx,
+      texture,
+      sprite,
+      message: '',
+      typing: false,
+      expiresAt: 0
+    };
+
+    this._drawChatBubble(bubble, '');
+    ownerObject3D.userData.chatBubble = bubble;
+    return bubble;
+  }
+
+  _attachNameTag(ownerObject3D) {
+    if (!ownerObject3D) {
+      return null;
+    }
+
+    if (ownerObject3D.userData?.nameTag) {
+      return ownerObject3D.userData.nameTag;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 384;
+    canvas.height = 96;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return null;
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false
+    });
+
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(0, 3.9, 0);
+    sprite.scale.set(4.4, 1.1, 1);
+    sprite.renderOrder = 2900;
+    ownerObject3D.add(sprite);
+
+    const tag = { canvas, ctx, texture, sprite, text: DEFAULT_PLAYER_NAME };
+    ownerObject3D.userData.nameTag = tag;
+    this._setNameTagText(tag, DEFAULT_PLAYER_NAME);
+    return tag;
+  }
+
+  _setNameTagText(tag, text) {
+    if (!tag?.ctx) {
+      return;
+    }
+
+    const safe = sanitizePlayerName(text);
+    tag.text = safe;
+
+    const { ctx, canvas, texture } = tag;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const pad = 10;
+    const w = canvas.width - (pad * 2);
+    const h = canvas.height - (pad * 2);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.76)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.36)';
+    ctx.lineWidth = 2;
+    const radius = 12;
+    ctx.beginPath();
+    ctx.moveTo(pad + radius, pad);
+    ctx.lineTo(pad + w - radius, pad);
+    ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + radius);
+    ctx.lineTo(pad + w, pad + h - radius);
+    ctx.quadraticCurveTo(pad + w, pad + h, pad + w - radius, pad + h);
+    ctx.lineTo(pad + radius, pad + h);
+    ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - radius);
+    ctx.lineTo(pad, pad + radius);
+    ctx.quadraticCurveTo(pad, pad, pad + radius, pad);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 30px Consolas, "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(safe, canvas.width * 0.5, canvas.height * 0.54);
+
+    texture.needsUpdate = true;
+    tag.sprite.visible = true;
+  }
+
+  _drawChatBubble(bubble, text) {
+    if (!bubble?.ctx) {
+      return;
+    }
+
+    const { ctx, canvas, texture } = bubble;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const content = String(text || '').trim();
+    if (!content) {
+      texture.needsUpdate = true;
+      return;
+    }
+
+    const pad = 12;
+    const w = canvas.width - (pad * 2);
+    const h = canvas.height - 32;
+    const r = 20;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+    ctx.strokeStyle = 'rgba(8, 8, 8, 0.92)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(pad + r, pad);
+    ctx.lineTo(pad + w - r, pad);
+    ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + r);
+    ctx.lineTo(pad + w, pad + h - r);
+    ctx.quadraticCurveTo(pad + w, pad + h, pad + w - r, pad + h);
+    ctx.lineTo((canvas.width * 0.5) + 26, pad + h);
+    ctx.lineTo(canvas.width * 0.5, canvas.height - 6);
+    ctx.lineTo((canvas.width * 0.5) - 26, pad + h);
+    ctx.lineTo(pad + r, pad + h);
+    ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - r);
+    ctx.lineTo(pad, pad + r);
+    ctx.quadraticCurveTo(pad, pad, pad + r, pad);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#0a0a0a';
+    ctx.font = '700 34px Consolas, "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const clampedText = content.slice(0, CHAT_BUBBLE_MAX_CHARS);
+    const words = clampedText.split(/\s+/).filter(Boolean);
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (ctx.measureText(candidate).width < (w - 40)) {
+        line = candidate;
+      } else {
+        if (line) {
+          lines.push(line);
+        }
+        line = word;
+      }
+      if (lines.length >= 2) {
+        break;
+      }
+    }
+    if (line && lines.length < 2) {
+      lines.push(line);
+    }
+    if (lines.length === 0) {
+      lines.push(clampedText);
+    }
+
+    const lineHeight = 38;
+    const startY = (canvas.height * 0.5) - ((lines.length - 1) * lineHeight * 0.5) - 10;
+    for (let i = 0; i < lines.length; i += 1) {
+      ctx.fillText(lines[i], canvas.width * 0.5, startY + (i * lineHeight));
+    }
+
+    texture.needsUpdate = true;
+  }
+
+  _setChatBubbleMessage(bubble, message, durationMs) {
+    if (!bubble) {
+      return;
+    }
+
+    const sanitized = String(message || '').trim().slice(0, CHAT_BUBBLE_MAX_CHARS);
+    if (!sanitized) {
+      return;
+    }
+
+    bubble.message = sanitized;
+    bubble.typing = false;
+    bubble.expiresAt = Date.now() + Math.max(800, Number(durationMs) || CHAT_BUBBLE_DURATION_MS);
+    this._drawChatBubble(bubble, bubble.message);
+    bubble.sprite.visible = true;
+  }
+
+  _resetChatBubble(bubble) {
+    if (!bubble) {
+      return;
+    }
+    bubble.message = '';
+    bubble.typing = false;
+    bubble.expiresAt = 0;
+    bubble.sprite.visible = false;
+    this._drawChatBubble(bubble, '');
+  }
+
+  _setChatBubbleTyping(bubble, typing) {
+    if (!bubble) {
+      return;
+    }
+
+    bubble.typing = typing === true;
+    if (bubble.typing) {
+      this._drawChatBubble(bubble, '...');
+      bubble.sprite.visible = true;
+      return;
+    }
+
+    if (bubble.message && bubble.expiresAt > Date.now()) {
+      this._drawChatBubble(bubble, bubble.message);
+      bubble.sprite.visible = true;
+      return;
+    }
+
+    bubble.sprite.visible = false;
+  }
+
+  _updateChatBubble(bubble, nowMs) {
+    if (!bubble) {
+      return;
+    }
+
+    if (bubble.typing) {
+      bubble.sprite.visible = true;
+      return;
+    }
+
+    if (bubble.message && bubble.expiresAt > nowMs) {
+      bubble.sprite.visible = true;
+      return;
+    }
+
+    bubble.sprite.visible = false;
+  }
+
+  _updateLabelAnchors() {
+    const applyAnchor = (ownerObject3D, nameTag, chatBubble, cachedAnchor = null) => {
+      if (!ownerObject3D) {
+        return;
+      }
+
+      const anchor = Number.isFinite(cachedAnchor)
+        ? cachedAnchor
+        : (Number(ownerObject3D.userData?.labelAnchorY) || this._estimateLabelAnchorY(ownerObject3D));
+      ownerObject3D.userData.labelAnchorY = anchor;
+
+      if (nameTag?.sprite) {
+        nameTag.sprite.position.y = anchor + 0.18;
+      }
+      if (chatBubble?.sprite) {
+        chatBubble.sprite.position.y = anchor + 1.05;
+      }
+    };
+
+    applyAnchor(this.localPlayer, this.localNameTag, this.localChatBubble, this.localPlayer?.userData?.labelAnchorY);
+    for (const remote of this.remotePlayers.values()) {
+      applyAnchor(remote.object3D, remote.nameTag, remote.chatBubble, remote.labelAnchorY);
+    }
   }
 }

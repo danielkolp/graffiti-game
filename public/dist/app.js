@@ -17852,6 +17852,405 @@
       return data;
     }
   };
+  var InterleavedBuffer = class {
+    constructor(array, stride) {
+      this.isInterleavedBuffer = true;
+      this.array = array;
+      this.stride = stride;
+      this.count = array !== void 0 ? array.length / stride : 0;
+      this.usage = StaticDrawUsage;
+      this._updateRange = { offset: 0, count: -1 };
+      this.updateRanges = [];
+      this.version = 0;
+      this.uuid = generateUUID();
+    }
+    onUploadCallback() {
+    }
+    set needsUpdate(value) {
+      if (value === true) this.version++;
+    }
+    get updateRange() {
+      console.warn("THREE.InterleavedBuffer: updateRange() is deprecated and will be removed in r169. Use addUpdateRange() instead.");
+      return this._updateRange;
+    }
+    setUsage(value) {
+      this.usage = value;
+      return this;
+    }
+    addUpdateRange(start, count) {
+      this.updateRanges.push({ start, count });
+    }
+    clearUpdateRanges() {
+      this.updateRanges.length = 0;
+    }
+    copy(source) {
+      this.array = new source.array.constructor(source.array);
+      this.count = source.count;
+      this.stride = source.stride;
+      this.usage = source.usage;
+      return this;
+    }
+    copyAt(index1, attribute, index2) {
+      index1 *= this.stride;
+      index2 *= attribute.stride;
+      for (let i = 0, l = this.stride; i < l; i++) {
+        this.array[index1 + i] = attribute.array[index2 + i];
+      }
+      return this;
+    }
+    set(value, offset = 0) {
+      this.array.set(value, offset);
+      return this;
+    }
+    clone(data) {
+      if (data.arrayBuffers === void 0) {
+        data.arrayBuffers = {};
+      }
+      if (this.array.buffer._uuid === void 0) {
+        this.array.buffer._uuid = generateUUID();
+      }
+      if (data.arrayBuffers[this.array.buffer._uuid] === void 0) {
+        data.arrayBuffers[this.array.buffer._uuid] = this.array.slice(0).buffer;
+      }
+      const array = new this.array.constructor(data.arrayBuffers[this.array.buffer._uuid]);
+      const ib = new this.constructor(array, this.stride);
+      ib.setUsage(this.usage);
+      return ib;
+    }
+    onUpload(callback) {
+      this.onUploadCallback = callback;
+      return this;
+    }
+    toJSON(data) {
+      if (data.arrayBuffers === void 0) {
+        data.arrayBuffers = {};
+      }
+      if (this.array.buffer._uuid === void 0) {
+        this.array.buffer._uuid = generateUUID();
+      }
+      if (data.arrayBuffers[this.array.buffer._uuid] === void 0) {
+        data.arrayBuffers[this.array.buffer._uuid] = Array.from(new Uint32Array(this.array.buffer));
+      }
+      return {
+        uuid: this.uuid,
+        buffer: this.array.buffer._uuid,
+        type: this.array.constructor.name,
+        stride: this.stride
+      };
+    }
+  };
+  var _vector$6 = /* @__PURE__ */ new Vector3();
+  var InterleavedBufferAttribute = class _InterleavedBufferAttribute {
+    constructor(interleavedBuffer, itemSize, offset, normalized = false) {
+      this.isInterleavedBufferAttribute = true;
+      this.name = "";
+      this.data = interleavedBuffer;
+      this.itemSize = itemSize;
+      this.offset = offset;
+      this.normalized = normalized;
+    }
+    get count() {
+      return this.data.count;
+    }
+    get array() {
+      return this.data.array;
+    }
+    set needsUpdate(value) {
+      this.data.needsUpdate = value;
+    }
+    applyMatrix4(m) {
+      for (let i = 0, l = this.data.count; i < l; i++) {
+        _vector$6.fromBufferAttribute(this, i);
+        _vector$6.applyMatrix4(m);
+        this.setXYZ(i, _vector$6.x, _vector$6.y, _vector$6.z);
+      }
+      return this;
+    }
+    applyNormalMatrix(m) {
+      for (let i = 0, l = this.count; i < l; i++) {
+        _vector$6.fromBufferAttribute(this, i);
+        _vector$6.applyNormalMatrix(m);
+        this.setXYZ(i, _vector$6.x, _vector$6.y, _vector$6.z);
+      }
+      return this;
+    }
+    transformDirection(m) {
+      for (let i = 0, l = this.count; i < l; i++) {
+        _vector$6.fromBufferAttribute(this, i);
+        _vector$6.transformDirection(m);
+        this.setXYZ(i, _vector$6.x, _vector$6.y, _vector$6.z);
+      }
+      return this;
+    }
+    setX(index, x) {
+      if (this.normalized) x = normalize(x, this.array);
+      this.data.array[index * this.data.stride + this.offset] = x;
+      return this;
+    }
+    setY(index, y) {
+      if (this.normalized) y = normalize(y, this.array);
+      this.data.array[index * this.data.stride + this.offset + 1] = y;
+      return this;
+    }
+    setZ(index, z) {
+      if (this.normalized) z = normalize(z, this.array);
+      this.data.array[index * this.data.stride + this.offset + 2] = z;
+      return this;
+    }
+    setW(index, w) {
+      if (this.normalized) w = normalize(w, this.array);
+      this.data.array[index * this.data.stride + this.offset + 3] = w;
+      return this;
+    }
+    getX(index) {
+      let x = this.data.array[index * this.data.stride + this.offset];
+      if (this.normalized) x = denormalize(x, this.array);
+      return x;
+    }
+    getY(index) {
+      let y = this.data.array[index * this.data.stride + this.offset + 1];
+      if (this.normalized) y = denormalize(y, this.array);
+      return y;
+    }
+    getZ(index) {
+      let z = this.data.array[index * this.data.stride + this.offset + 2];
+      if (this.normalized) z = denormalize(z, this.array);
+      return z;
+    }
+    getW(index) {
+      let w = this.data.array[index * this.data.stride + this.offset + 3];
+      if (this.normalized) w = denormalize(w, this.array);
+      return w;
+    }
+    setXY(index, x, y) {
+      index = index * this.data.stride + this.offset;
+      if (this.normalized) {
+        x = normalize(x, this.array);
+        y = normalize(y, this.array);
+      }
+      this.data.array[index + 0] = x;
+      this.data.array[index + 1] = y;
+      return this;
+    }
+    setXYZ(index, x, y, z) {
+      index = index * this.data.stride + this.offset;
+      if (this.normalized) {
+        x = normalize(x, this.array);
+        y = normalize(y, this.array);
+        z = normalize(z, this.array);
+      }
+      this.data.array[index + 0] = x;
+      this.data.array[index + 1] = y;
+      this.data.array[index + 2] = z;
+      return this;
+    }
+    setXYZW(index, x, y, z, w) {
+      index = index * this.data.stride + this.offset;
+      if (this.normalized) {
+        x = normalize(x, this.array);
+        y = normalize(y, this.array);
+        z = normalize(z, this.array);
+        w = normalize(w, this.array);
+      }
+      this.data.array[index + 0] = x;
+      this.data.array[index + 1] = y;
+      this.data.array[index + 2] = z;
+      this.data.array[index + 3] = w;
+      return this;
+    }
+    clone(data) {
+      if (data === void 0) {
+        console.log("THREE.InterleavedBufferAttribute.clone(): Cloning an interleaved buffer attribute will de-interleave buffer data.");
+        const array = [];
+        for (let i = 0; i < this.count; i++) {
+          const index = i * this.data.stride + this.offset;
+          for (let j = 0; j < this.itemSize; j++) {
+            array.push(this.data.array[index + j]);
+          }
+        }
+        return new BufferAttribute(new this.array.constructor(array), this.itemSize, this.normalized);
+      } else {
+        if (data.interleavedBuffers === void 0) {
+          data.interleavedBuffers = {};
+        }
+        if (data.interleavedBuffers[this.data.uuid] === void 0) {
+          data.interleavedBuffers[this.data.uuid] = this.data.clone(data);
+        }
+        return new _InterleavedBufferAttribute(data.interleavedBuffers[this.data.uuid], this.itemSize, this.offset, this.normalized);
+      }
+    }
+    toJSON(data) {
+      if (data === void 0) {
+        console.log("THREE.InterleavedBufferAttribute.toJSON(): Serializing an interleaved buffer attribute will de-interleave buffer data.");
+        const array = [];
+        for (let i = 0; i < this.count; i++) {
+          const index = i * this.data.stride + this.offset;
+          for (let j = 0; j < this.itemSize; j++) {
+            array.push(this.data.array[index + j]);
+          }
+        }
+        return {
+          itemSize: this.itemSize,
+          type: this.array.constructor.name,
+          array,
+          normalized: this.normalized
+        };
+      } else {
+        if (data.interleavedBuffers === void 0) {
+          data.interleavedBuffers = {};
+        }
+        if (data.interleavedBuffers[this.data.uuid] === void 0) {
+          data.interleavedBuffers[this.data.uuid] = this.data.toJSON(data);
+        }
+        return {
+          isInterleavedBufferAttribute: true,
+          itemSize: this.itemSize,
+          data: this.data.uuid,
+          offset: this.offset,
+          normalized: this.normalized
+        };
+      }
+    }
+  };
+  var SpriteMaterial = class extends Material {
+    constructor(parameters) {
+      super();
+      this.isSpriteMaterial = true;
+      this.type = "SpriteMaterial";
+      this.color = new Color(16777215);
+      this.map = null;
+      this.alphaMap = null;
+      this.rotation = 0;
+      this.sizeAttenuation = true;
+      this.transparent = true;
+      this.fog = true;
+      this.setValues(parameters);
+    }
+    copy(source) {
+      super.copy(source);
+      this.color.copy(source.color);
+      this.map = source.map;
+      this.alphaMap = source.alphaMap;
+      this.rotation = source.rotation;
+      this.sizeAttenuation = source.sizeAttenuation;
+      this.fog = source.fog;
+      return this;
+    }
+  };
+  var _geometry;
+  var _intersectPoint = /* @__PURE__ */ new Vector3();
+  var _worldScale = /* @__PURE__ */ new Vector3();
+  var _mvPosition = /* @__PURE__ */ new Vector3();
+  var _alignedPosition = /* @__PURE__ */ new Vector2();
+  var _rotatedPosition = /* @__PURE__ */ new Vector2();
+  var _viewWorldMatrix = /* @__PURE__ */ new Matrix4();
+  var _vA = /* @__PURE__ */ new Vector3();
+  var _vB = /* @__PURE__ */ new Vector3();
+  var _vC = /* @__PURE__ */ new Vector3();
+  var _uvA = /* @__PURE__ */ new Vector2();
+  var _uvB = /* @__PURE__ */ new Vector2();
+  var _uvC = /* @__PURE__ */ new Vector2();
+  var Sprite = class extends Object3D {
+    constructor(material = new SpriteMaterial()) {
+      super();
+      this.isSprite = true;
+      this.type = "Sprite";
+      if (_geometry === void 0) {
+        _geometry = new BufferGeometry();
+        const float32Array = new Float32Array([
+          -0.5,
+          -0.5,
+          0,
+          0,
+          0,
+          0.5,
+          -0.5,
+          0,
+          1,
+          0,
+          0.5,
+          0.5,
+          0,
+          1,
+          1,
+          -0.5,
+          0.5,
+          0,
+          0,
+          1
+        ]);
+        const interleavedBuffer = new InterleavedBuffer(float32Array, 5);
+        _geometry.setIndex([0, 1, 2, 0, 2, 3]);
+        _geometry.setAttribute("position", new InterleavedBufferAttribute(interleavedBuffer, 3, 0, false));
+        _geometry.setAttribute("uv", new InterleavedBufferAttribute(interleavedBuffer, 2, 3, false));
+      }
+      this.geometry = _geometry;
+      this.material = material;
+      this.center = new Vector2(0.5, 0.5);
+    }
+    raycast(raycaster, intersects) {
+      if (raycaster.camera === null) {
+        console.error('THREE.Sprite: "Raycaster.camera" needs to be set in order to raycast against sprites.');
+      }
+      _worldScale.setFromMatrixScale(this.matrixWorld);
+      _viewWorldMatrix.copy(raycaster.camera.matrixWorld);
+      this.modelViewMatrix.multiplyMatrices(raycaster.camera.matrixWorldInverse, this.matrixWorld);
+      _mvPosition.setFromMatrixPosition(this.modelViewMatrix);
+      if (raycaster.camera.isPerspectiveCamera && this.material.sizeAttenuation === false) {
+        _worldScale.multiplyScalar(-_mvPosition.z);
+      }
+      const rotation = this.material.rotation;
+      let sin, cos;
+      if (rotation !== 0) {
+        cos = Math.cos(rotation);
+        sin = Math.sin(rotation);
+      }
+      const center = this.center;
+      transformVertex(_vA.set(-0.5, -0.5, 0), _mvPosition, center, _worldScale, sin, cos);
+      transformVertex(_vB.set(0.5, -0.5, 0), _mvPosition, center, _worldScale, sin, cos);
+      transformVertex(_vC.set(0.5, 0.5, 0), _mvPosition, center, _worldScale, sin, cos);
+      _uvA.set(0, 0);
+      _uvB.set(1, 0);
+      _uvC.set(1, 1);
+      let intersect = raycaster.ray.intersectTriangle(_vA, _vB, _vC, false, _intersectPoint);
+      if (intersect === null) {
+        transformVertex(_vB.set(-0.5, 0.5, 0), _mvPosition, center, _worldScale, sin, cos);
+        _uvB.set(0, 1);
+        intersect = raycaster.ray.intersectTriangle(_vA, _vC, _vB, false, _intersectPoint);
+        if (intersect === null) {
+          return;
+        }
+      }
+      const distance = raycaster.ray.origin.distanceTo(_intersectPoint);
+      if (distance < raycaster.near || distance > raycaster.far) return;
+      intersects.push({
+        distance,
+        point: _intersectPoint.clone(),
+        uv: Triangle.getInterpolation(_intersectPoint, _vA, _vB, _vC, _uvA, _uvB, _uvC, new Vector2()),
+        face: null,
+        object: this
+      });
+    }
+    copy(source, recursive) {
+      super.copy(source, recursive);
+      if (source.center !== void 0) this.center.copy(source.center);
+      this.material = source.material;
+      return this;
+    }
+  };
+  function transformVertex(vertexPosition, mvPosition, center, scale, sin, cos) {
+    _alignedPosition.subVectors(vertexPosition, center).addScalar(0.5).multiply(scale);
+    if (sin !== void 0) {
+      _rotatedPosition.x = cos * _alignedPosition.x - sin * _alignedPosition.y;
+      _rotatedPosition.y = sin * _alignedPosition.x + cos * _alignedPosition.y;
+    } else {
+      _rotatedPosition.copy(_alignedPosition);
+    }
+    vertexPosition.copy(mvPosition);
+    vertexPosition.x += _rotatedPosition.x;
+    vertexPosition.y += _rotatedPosition.y;
+    vertexPosition.applyMatrix4(_viewWorldMatrix);
+  }
   var LineBasicMaterial = class extends Material {
     constructor(parameters) {
       super();
@@ -39538,7 +39937,7 @@
   var WebGL1Renderer2 = class extends WebGLRenderer2 {
   };
   WebGL1Renderer2.prototype.isWebGL1Renderer = true;
-  var InterleavedBuffer = class {
+  var InterleavedBuffer2 = class {
     constructor(array, stride) {
       this.isInterleavedBuffer = true;
       this.array = array;
@@ -39625,8 +40024,8 @@
       };
     }
   };
-  var _vector$6 = /* @__PURE__ */ new Vector32();
-  var InterleavedBufferAttribute = class _InterleavedBufferAttribute {
+  var _vector$62 = /* @__PURE__ */ new Vector32();
+  var InterleavedBufferAttribute2 = class _InterleavedBufferAttribute {
     constructor(interleavedBuffer, itemSize, offset, normalized = false) {
       this.isInterleavedBufferAttribute = true;
       this.name = "";
@@ -39646,25 +40045,25 @@
     }
     applyMatrix4(m) {
       for (let i = 0, l = this.data.count; i < l; i++) {
-        _vector$6.fromBufferAttribute(this, i);
-        _vector$6.applyMatrix4(m);
-        this.setXYZ(i, _vector$6.x, _vector$6.y, _vector$6.z);
+        _vector$62.fromBufferAttribute(this, i);
+        _vector$62.applyMatrix4(m);
+        this.setXYZ(i, _vector$62.x, _vector$62.y, _vector$62.z);
       }
       return this;
     }
     applyNormalMatrix(m) {
       for (let i = 0, l = this.count; i < l; i++) {
-        _vector$6.fromBufferAttribute(this, i);
-        _vector$6.applyNormalMatrix(m);
-        this.setXYZ(i, _vector$6.x, _vector$6.y, _vector$6.z);
+        _vector$62.fromBufferAttribute(this, i);
+        _vector$62.applyNormalMatrix(m);
+        this.setXYZ(i, _vector$62.x, _vector$62.y, _vector$62.z);
       }
       return this;
     }
     transformDirection(m) {
       for (let i = 0, l = this.count; i < l; i++) {
-        _vector$6.fromBufferAttribute(this, i);
-        _vector$6.transformDirection(m);
-        this.setXYZ(i, _vector$6.x, _vector$6.y, _vector$6.z);
+        _vector$62.fromBufferAttribute(this, i);
+        _vector$62.transformDirection(m);
+        this.setXYZ(i, _vector$62.x, _vector$62.y, _vector$62.z);
       }
       return this;
     }
@@ -42771,7 +43170,7 @@
     ]
   ];
   var _controlInterpolantsResultBuffer2 = new Float32Array(1);
-  var InstancedInterleavedBuffer = class extends InterleavedBuffer {
+  var InstancedInterleavedBuffer = class extends InterleavedBuffer2 {
     constructor(array, stride, meshPerAttribute = 1) {
       super(array, stride);
       this.isInstancedInterleavedBuffer = true;
@@ -42931,10 +43330,10 @@
       this.setAttribute("uv", new Float32BufferAttribute2([0, 2, 0, 0, 2, 0], 2));
     }
   };
-  var _geometry = new FullscreenTriangleGeometry();
+  var _geometry2 = new FullscreenTriangleGeometry();
   var FullScreenQuad = class {
     constructor(material) {
-      this._mesh = new Mesh2(_geometry, material);
+      this._mesh = new Mesh2(_geometry2, material);
     }
     dispose() {
       this._mesh.geometry.dispose();
@@ -45621,13 +46020,13 @@
     _getNodeRef(cache, index, object) {
       if (cache.refs[index] <= 1) return object;
       const ref = object.clone();
-      const updateMappings = (original, clone) => {
+      const updateMappings = (original, clone2) => {
         const mappings = this.associations.get(original);
         if (mappings != null) {
-          this.associations.set(clone, mappings);
+          this.associations.set(clone2, mappings);
         }
         for (const [i, child] of original.children.entries()) {
-          updateMappings(child, clone.children[i]);
+          updateMappings(child, clone2.children[i]);
         }
       };
       updateMappings(object, ref);
@@ -45815,10 +46214,10 @@
           let ib = parser.cache.get(ibCacheKey);
           if (!ib) {
             array = new TypedArray(bufferView, ibSlice * byteStride, accessorDef.count * byteStride / elementBytes);
-            ib = new InterleavedBuffer(array, byteStride / elementBytes);
+            ib = new InterleavedBuffer2(array, byteStride / elementBytes);
             parser.cache.add(ibCacheKey, ib);
           }
-          bufferAttribute = new InterleavedBufferAttribute(ib, itemSize, byteOffset % byteStride / elementBytes, normalized);
+          bufferAttribute = new InterleavedBufferAttribute2(ib, itemSize, byteOffset % byteStride / elementBytes, normalized);
         } else {
           if (bufferView === null) {
             array = new TypedArray(accessorDef.count * itemSize);
@@ -47577,6 +47976,36 @@
     }
   };
 
+  // public/vendor/three/examples/jsm/utils/SkeletonUtils.js
+  function clone(source) {
+    const sourceLookup = /* @__PURE__ */ new Map();
+    const cloneLookup = /* @__PURE__ */ new Map();
+    const clone2 = source.clone();
+    parallelTraverse(source, clone2, function(sourceNode, clonedNode) {
+      sourceLookup.set(clonedNode, sourceNode);
+      cloneLookup.set(sourceNode, clonedNode);
+    });
+    clone2.traverse(function(node) {
+      if (!node.isSkinnedMesh) return;
+      const clonedMesh = node;
+      const sourceMesh = sourceLookup.get(node);
+      const sourceBones = sourceMesh.skeleton.bones;
+      clonedMesh.skeleton = sourceMesh.skeleton.clone();
+      clonedMesh.bindMatrix.copy(sourceMesh.bindMatrix);
+      clonedMesh.skeleton.bones = sourceBones.map(function(bone) {
+        return cloneLookup.get(bone);
+      });
+      clonedMesh.bind(clonedMesh.skeleton, clonedMesh.bindMatrix);
+    });
+    return clone2;
+  }
+  function parallelTraverse(a, b, callback) {
+    callback(a, b);
+    for (let i = 0; i < a.children.length; i++) {
+      parallelTraverse(a.children[i], b.children[i], callback);
+    }
+  }
+
   // public/game/PlayerController.js
   var PLAYABLE_STATES = ["idle", "walk", "run"];
   var QUARTER_TURN = Math.PI * 0.5;
@@ -47588,6 +48017,11 @@
     "/models/idkbro.glb"
   ];
   var PLAYER_LOAD_TIMEOUT_MS = 15e3;
+  var DEFAULT_PLAYER_COLOR = "#1b69fa";
+  var DEFAULT_PLAYER_NAME = "Writer";
+  var CHAT_BUBBLE_DURATION_MS = 5e3;
+  var CHAT_BUBBLE_MAX_CHARS = 140;
+  var PLAYER_NAME_MAX_CHARS = 18;
   function normalizeAngle2(value) {
     let angle = value;
     while (angle > Math.PI) angle -= Math.PI * 2;
@@ -47626,11 +48060,27 @@
     const params = new URLSearchParams(window.location.search);
     return params.get("animDebug") === "1";
   }
-  function buildFallbackCharacter() {
+  function normalizeHexColor(value, fallback = DEFAULT_PLAYER_COLOR) {
+    const input = String(value || "").trim().toLowerCase();
+    return /^#[0-9a-f]{6}$/.test(input) ? input : fallback;
+  }
+  function lightenHexColor(hexColor, mix = 0.45) {
+    const safe = normalizeHexColor(hexColor);
+    const base = new Color(safe);
+    const out = base.clone().lerp(new Color("#ffffff"), clamp3(mix, 0, 1));
+    return `#${out.getHexString()}`;
+  }
+  function sanitizePlayerName(value, fallback = DEFAULT_PLAYER_NAME) {
+    const collapsed = String(value || "").replace(/\s+/g, " ").trim().slice(0, PLAYER_NAME_MAX_CHARS);
+    return collapsed || fallback;
+  }
+  function buildFallbackCharacter(baseColor = DEFAULT_PLAYER_COLOR) {
+    const safeBase = normalizeHexColor(baseColor);
+    const headColor = lightenHexColor(safeBase, 0.56);
     const group = new Group();
     const body = new Mesh(
       new CapsuleGeometry(0.38, 1.05, 8, 16),
-      new MeshStandardMaterial({ color: 1796602, roughness: 0.72, metalness: 0.08 })
+      new MeshStandardMaterial({ color: safeBase, roughness: 0.72, metalness: 0.08 })
     );
     body.castShadow = true;
     body.receiveShadow = false;
@@ -47638,7 +48088,7 @@
     group.add(body);
     const head = new Mesh(
       new SphereGeometry(0.25, 16, 16),
-      new MeshStandardMaterial({ color: 10404351, roughness: 0.8, metalness: 0.04 })
+      new MeshStandardMaterial({ color: headColor, roughness: 0.8, metalness: 0.04 })
     );
     head.position.set(0, 1.95, 0);
     head.castShadow = true;
@@ -47649,15 +48099,20 @@
     constructor() {
       this.available = [];
     }
-    acquire() {
+    acquire(baseColor = DEFAULT_PLAYER_COLOR) {
       if (this.available.length > 0) {
-        return this.available.pop();
+        const reused = this.available.pop();
+        const mesh2 = reused.children[0];
+        if (mesh2?.material?.color) {
+          mesh2.material.color.set(normalizeHexColor(baseColor));
+        }
+        return reused;
       }
       const root = new Group();
       const mesh = new Mesh(
         new CapsuleGeometry(0.35, 1.05, 8, 16),
         new MeshStandardMaterial({
-          color: 6261464,
+          color: normalizeHexColor(baseColor),
           roughness: 0.75,
           metalness: 0.05
         })
@@ -47716,8 +48171,24 @@
       this.debugAnimations = isAnimationDebugEnabled();
       this.tempQuat = new Quaternion();
       this.tempForward = new Vector3();
+      this.tempWorldAnchor = new Vector3();
+      this.tempBounds = new Box3();
+      this.tempBoundsSize = new Vector3();
       this.remotePlayers = /* @__PURE__ */ new Map();
       this.remotePool = new RemotePlayerPool();
+      this.remoteStateOrder = ["idle", "walk", "run"];
+      this.remoteClipMap = {};
+      this.remoteTemplateReady = false;
+      this.tempRemotePrevPos = new Vector3();
+      this.localPlayerColor = DEFAULT_PLAYER_COLOR;
+      this.localPlayerName = DEFAULT_PLAYER_NAME;
+      this.localPlayerId = null;
+      this.localChatBubble = null;
+      this.localNameTag = null;
+      this.pendingRemoteChat = /* @__PURE__ */ new Map();
+      this.pendingRemoteTyping = /* @__PURE__ */ new Map();
+      this.pendingRemoteColors = /* @__PURE__ */ new Map();
+      this.pendingRemoteNames = /* @__PURE__ */ new Map();
     }
     getLocalPlayer() {
       return this.localPlayer;
@@ -47730,8 +48201,67 @@
           z: this.localPlayer.position.z
         },
         rotationY: this.localPlayer.rotation.y,
+        color: this.localPlayerColor,
+        name: this.localPlayerName,
         timestamp: Date.now()
       };
+    }
+    setLocalPlayerId(playerId) {
+      this.localPlayerId = playerId || null;
+    }
+    setLocalPlayerColor(colorHex) {
+      this.localPlayerColor = normalizeHexColor(colorHex);
+      if (this.localVisual) {
+        this._applyColorToVisual(this.localVisual, this.localPlayerColor);
+      }
+    }
+    setLocalPlayerName(name) {
+      this.localPlayerName = sanitizePlayerName(name);
+      this._setNameTagText(this.localNameTag, this.localPlayerName);
+    }
+    setLocalChatMessage(message, durationMs = CHAT_BUBBLE_DURATION_MS) {
+      this._setChatBubbleMessage(this.localChatBubble, message, durationMs);
+    }
+    setLocalTyping(typing) {
+      this._setChatBubbleTyping(this.localChatBubble, typing === true);
+    }
+    setRemoteChatMessage(playerId, message, durationMs = CHAT_BUBBLE_DURATION_MS) {
+      const remote = this.remotePlayers.get(playerId);
+      if (!remote) {
+        this.pendingRemoteChat.set(playerId, {
+          message: String(message || "").trim().slice(0, CHAT_BUBBLE_MAX_CHARS),
+          durationMs
+        });
+        return;
+      }
+      this._setChatBubbleMessage(remote.chatBubble, message, durationMs);
+    }
+    setRemoteTyping(playerId, typing) {
+      const remote = this.remotePlayers.get(playerId);
+      if (!remote) {
+        this.pendingRemoteTyping.set(playerId, typing === true);
+        return;
+      }
+      this._setChatBubbleTyping(remote.chatBubble, typing === true);
+    }
+    setRemotePlayerName(playerId, name) {
+      const remote = this.remotePlayers.get(playerId);
+      const safe = sanitizePlayerName(name);
+      if (!remote) {
+        this.pendingRemoteNames.set(playerId, safe);
+        return;
+      }
+      remote.name = safe;
+      this._setNameTagText(remote.nameTag, safe);
+    }
+    setRemotePlayerColor(playerId, colorHex) {
+      const remote = this.remotePlayers.get(playerId);
+      const safe = normalizeHexColor(colorHex);
+      if (!remote) {
+        this.pendingRemoteColors.set(playerId, safe);
+        return;
+      }
+      this._setRemotePlayerColor(remote, safe);
     }
     async loadLocalPlayer() {
       try {
@@ -47752,26 +48282,35 @@
           }
           const materials = Array.isArray(node.material) ? node.material : [node.material];
           for (const material of materials) {
-            if (material.color) {
-              material.color.setHex(1796602);
-            }
             if (material.isMeshStandardMaterial) {
               material.roughness = 0.68;
               material.metalness = 0.08;
             }
           }
         });
+        this._isolateVisualMaterials(this.localVisual);
+        this._applyColorToVisual(this.localVisual, this.localPlayerColor);
         this.localPlayer.add(this.localVisual);
+        this.localPlayer.userData.labelAnchorY = this._estimateLabelAnchorY(this.localPlayer);
+        this.localChatBubble = this._attachChatBubble(this.localPlayer);
+        this.localNameTag = this._attachNameTag(this.localPlayer);
+        this._setNameTagText(this.localNameTag, this.localPlayerName);
         this.facingReferenceNode = this._findFacingReferenceNode();
         this.facingCalibrated = false;
         this.alignmentPending = true;
         this._resetFacingAlignmentSampling();
         this._setupAnimations(gltf.animations || []);
+        this._prepareRemoteTemplate(gltf.animations || []);
+        this._upgradeRemotePlayersToModel();
       } catch (error) {
         console.error("Failed to load player model, using fallback:", error);
-        this.localVisual = buildFallbackCharacter();
+        this.localVisual = buildFallbackCharacter(this.localPlayerColor);
         this.localVisual.position.set(0, this.visualOffsetY, 0);
         this.localPlayer.add(this.localVisual);
+        this.localPlayer.userData.labelAnchorY = this._estimateLabelAnchorY(this.localPlayer);
+        this.localChatBubble = this._attachChatBubble(this.localPlayer);
+        this.localNameTag = this._attachNameTag(this.localPlayer);
+        this._setNameTagText(this.localNameTag, this.localPlayerName);
       }
     }
     async _loadPlayerModelWithCandidates() {
@@ -47813,27 +48352,47 @@
       this._autoAlignFacing(input);
       this._updateMovementRotation(input, dt, options.drawMode === true);
       this._updateRemotePlayers(dt);
+      this._updateChatBubble(this.localChatBubble, Date.now());
+      this._updateLabelAnchors();
     }
     upsertRemotePlayer(playerId, snapshot) {
       let remote = this.remotePlayers.get(playerId);
       if (!remote) {
-        const object3D = this.remotePool.acquire();
-        object3D.visible = true;
-        this.scene.add(object3D);
-        remote = {
-          id: playerId,
-          object3D,
-          targetPosition: new Vector3(),
-          targetRotationY: 0,
-          lastSeen: Date.now()
-        };
+        remote = this._createRemotePlayerInstance(playerId, snapshot);
+        remote.object3D.visible = true;
+        if (snapshot?.position) {
+          remote.object3D.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+          remote.targetPosition.copy(remote.object3D.position);
+        }
+        if (typeof snapshot?.rotationY === "number") {
+          remote.object3D.rotation.y = snapshot.rotationY;
+          remote.targetRotationY = snapshot.rotationY;
+        }
+        if (typeof snapshot?.color === "string") {
+          remote.color = normalizeHexColor(snapshot.color);
+        }
+        if (typeof snapshot?.name === "string") {
+          remote.name = sanitizePlayerName(snapshot.name);
+        }
+        remote.lastPosition.copy(remote.object3D.position);
+        remote.lastUpdateAt = Date.now();
+        remote.estimatedSpeed = 0;
+        this.scene.add(remote.object3D);
         this.remotePlayers.set(playerId, remote);
+        this._applyPendingRemoteUi(playerId, remote);
       }
       if (snapshot.position) {
         remote.targetPosition.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
       }
       if (typeof snapshot.rotationY === "number") {
         remote.targetRotationY = snapshot.rotationY;
+      }
+      if (typeof snapshot.color === "string") {
+        this._setRemotePlayerColor(remote, snapshot.color);
+      }
+      if (typeof snapshot.name === "string") {
+        remote.name = sanitizePlayerName(snapshot.name);
+        this._setNameTagText(remote.nameTag, remote.name);
       }
       remote.lastSeen = Date.now();
     }
@@ -47843,17 +48402,268 @@
         return;
       }
       this.scene.remove(remote.object3D);
-      this.remotePool.release(remote.object3D);
+      if (remote.usesFallback) {
+        this.remotePool.release(remote.object3D);
+      }
       this.remotePlayers.delete(playerId);
+    }
+    _applyPendingRemoteUi(playerId, remote) {
+      if (!remote) {
+        return;
+      }
+      if (this.pendingRemoteColors.has(playerId)) {
+        const color = this.pendingRemoteColors.get(playerId);
+        this._setRemotePlayerColor(remote, color);
+        this.pendingRemoteColors.delete(playerId);
+      }
+      if (this.pendingRemoteNames.has(playerId)) {
+        const name = this.pendingRemoteNames.get(playerId);
+        remote.name = sanitizePlayerName(name);
+        this._setNameTagText(remote.nameTag, remote.name);
+        this.pendingRemoteNames.delete(playerId);
+      }
+      if (this.pendingRemoteTyping.has(playerId)) {
+        this._setChatBubbleTyping(remote.chatBubble, this.pendingRemoteTyping.get(playerId) === true);
+        this.pendingRemoteTyping.delete(playerId);
+      }
+      if (this.pendingRemoteChat.has(playerId)) {
+        const pending = this.pendingRemoteChat.get(playerId);
+        if (pending?.message) {
+          this._setChatBubbleMessage(remote.chatBubble, pending.message, pending.durationMs);
+        }
+        this.pendingRemoteChat.delete(playerId);
+      }
     }
     _updateRemotePlayers(deltaSeconds) {
       const now3 = Date.now();
       for (const [playerId, remote] of this.remotePlayers.entries()) {
+        this.tempRemotePrevPos.copy(remote.object3D.position);
         remote.object3D.position.lerp(remote.targetPosition, 1 - Math.exp(-12 * deltaSeconds));
         remote.object3D.rotation.y = damp3(remote.object3D.rotation.y, remote.targetRotationY, 12, deltaSeconds);
+        const movedDistance = remote.object3D.position.distanceTo(this.tempRemotePrevPos);
+        const frameSpeed = movedDistance / Math.max(1e-4, deltaSeconds);
+        remote.estimatedSpeed = damp3(remote.estimatedSpeed || 0, frameSpeed, 8, deltaSeconds);
+        this._updateRemoteAnimation(remote, deltaSeconds);
+        this._updateChatBubble(remote.chatBubble, now3);
         if (now3 - remote.lastSeen > 15e3) {
           this.removeRemotePlayer(playerId);
         }
+      }
+    }
+    _prepareRemoteTemplate(clips) {
+      const clipMap = this._resolveAnimationClips(clips);
+      const remoteClipMap = {};
+      for (const stateName of this.remoteStateOrder) {
+        const sourceClip = clipMap[stateName];
+        if (!sourceClip) {
+          continue;
+        }
+        const preprocessed = this._preprocessClip(sourceClip, `remote_${stateName}`);
+        if (!preprocessed) {
+          continue;
+        }
+        remoteClipMap[stateName] = preprocessed;
+      }
+      this.remoteClipMap = remoteClipMap;
+      this.remoteTemplateReady = !!this.localVisual;
+    }
+    _createRemotePlayerInstance(playerId, snapshot = null) {
+      let object3D = null;
+      let usesFallback = false;
+      const desiredColor = normalizeHexColor(snapshot?.color || this.pendingRemoteColors.get(playerId) || this.localPlayerColor);
+      const desiredName = sanitizePlayerName(snapshot?.name || this.pendingRemoteNames.get(playerId) || DEFAULT_PLAYER_NAME);
+      if (this.remoteTemplateReady && this.localVisual) {
+        try {
+          const root = new Group();
+          root.name = `RemotePlayer-${playerId}`;
+          const visual = clone(this.localVisual);
+          visual.position.set(0, this.visualOffsetY, 0);
+          visual.rotation.set(0, 0, 0);
+          this._isolateVisualMaterials(visual);
+          root.add(visual);
+          object3D = root;
+        } catch (error) {
+          console.warn("Remote player model clone failed, falling back to capsule:", error);
+        }
+      }
+      if (!object3D) {
+        object3D = this.remotePool.acquire(desiredColor);
+        usesFallback = true;
+      }
+      const remote = {
+        id: playerId,
+        object3D,
+        targetPosition: new Vector3(),
+        targetRotationY: 0,
+        lastSeen: Date.now(),
+        mixer: null,
+        actions: {},
+        currentState: "idle",
+        estimatedSpeed: 0,
+        lastPosition: new Vector3(),
+        lastUpdateAt: Date.now(),
+        color: desiredColor,
+        name: desiredName,
+        chatBubble: this._attachChatBubble(object3D),
+        nameTag: this._attachNameTag(object3D),
+        labelAnchorY: this._estimateLabelAnchorY(object3D),
+        usesFallback
+      };
+      object3D.userData.labelAnchorY = remote.labelAnchorY;
+      this._resetChatBubble(remote.chatBubble);
+      this._setNameTagText(remote.nameTag, remote.name);
+      if (!usesFallback) {
+        this._initRemoteAnimationRig(remote);
+        this._setRemotePlayerColor(remote, desiredColor);
+      }
+      return remote;
+    }
+    _initRemoteAnimationRig(remote) {
+      if (!remote || !remote.object3D || remote.usesFallback) {
+        return;
+      }
+      const visual = remote.object3D.children[0] || null;
+      if (!visual) {
+        return;
+      }
+      const mixer = new AnimationMixer(visual);
+      const actions = {};
+      for (const stateName of this.remoteStateOrder) {
+        const clip = this.remoteClipMap[stateName];
+        if (!clip) {
+          continue;
+        }
+        const action = mixer.clipAction(clip);
+        action.setLoop(LoopRepeat, Infinity);
+        action.clampWhenFinished = false;
+        action.enabled = true;
+        action.setEffectiveWeight(1);
+        action.setEffectiveTimeScale(1);
+        actions[stateName] = action;
+      }
+      remote.mixer = mixer;
+      remote.actions = actions;
+      remote.currentState = actions.idle ? "idle" : actions.walk ? "walk" : actions.run ? "run" : "idle";
+      const initialAction = actions[remote.currentState] || Object.values(actions)[0] || null;
+      if (initialAction) {
+        initialAction.reset().play();
+      }
+    }
+    _setRemotePlayerColor(remote, colorHex) {
+      if (!remote || !remote.object3D) {
+        return;
+      }
+      const safe = normalizeHexColor(colorHex);
+      remote.color = safe;
+      if (remote.usesFallback) {
+        const mesh = remote.object3D.children[0];
+        if (mesh?.material?.color) {
+          mesh.material.color.set(safe);
+        }
+        return;
+      }
+      const visual = remote.object3D.children[0];
+      if (visual) {
+        this._applyColorToVisual(visual, safe);
+      }
+    }
+    _estimateLabelAnchorY(ownerObject3D) {
+      if (!ownerObject3D) {
+        return 3.6;
+      }
+      const visual = ownerObject3D.children?.[0] || ownerObject3D;
+      this.tempBounds.setFromObject(visual);
+      this.tempBounds.getSize(this.tempBoundsSize);
+      const height = Number.isFinite(this.tempBoundsSize.y) && this.tempBoundsSize.y > 0.1 ? this.tempBoundsSize.y : 2.2;
+      return clamp3(height + 0.9, 2.8, 6.8);
+    }
+    _setRemoteState(remote, nextState) {
+      if (!remote || !remote.actions) {
+        return;
+      }
+      const playable = remote.actions[nextState] ? nextState : remote.actions.walk ? "walk" : remote.actions.idle ? "idle" : remote.actions.run ? "run" : null;
+      if (!playable || playable === remote.currentState) {
+        return;
+      }
+      const fromAction = remote.actions[remote.currentState] || null;
+      const toAction = remote.actions[playable] || null;
+      if (!toAction) {
+        return;
+      }
+      const fade = 0.16;
+      if (fromAction) {
+        fromAction.fadeOut(fade);
+      }
+      toAction.reset().setEffectiveWeight(1).fadeIn(fade).play();
+      remote.currentState = playable;
+    }
+    _updateRemoteAnimation(remote, deltaSeconds) {
+      if (!remote || !remote.mixer || !remote.actions) {
+        return;
+      }
+      let nextState = "idle";
+      if ((remote.estimatedSpeed || 0) > 5.2) {
+        nextState = "run";
+      } else if ((remote.estimatedSpeed || 0) > 0.3) {
+        nextState = "walk";
+      }
+      this._setRemoteState(remote, nextState);
+      const action = remote.actions[remote.currentState];
+      if (action) {
+        if (remote.currentState === "walk") {
+          action.setEffectiveTimeScale(clamp3((remote.estimatedSpeed || 0) / this.walkReferenceSpeed, 0.7, 1.35));
+        } else if (remote.currentState === "run") {
+          action.setEffectiveTimeScale(clamp3((remote.estimatedSpeed || 0) / this.runReferenceSpeed, 0.7, 1.35));
+        } else {
+          action.setEffectiveTimeScale(1);
+        }
+      }
+      remote.mixer.update(deltaSeconds);
+    }
+    _upgradeRemotePlayersToModel() {
+      if (!this.remoteTemplateReady || this.remotePlayers.size === 0) {
+        return;
+      }
+      for (const [playerId, remote] of this.remotePlayers.entries()) {
+        if (!remote.usesFallback) {
+          continue;
+        }
+        const snapshot = {
+          position: {
+            x: remote.object3D.position.x,
+            y: remote.object3D.position.y,
+            z: remote.object3D.position.z
+          },
+          rotationY: remote.object3D.rotation.y,
+          color: remote.color,
+          name: remote.name
+        };
+        this.scene.remove(remote.object3D);
+        this.remotePool.release(remote.object3D);
+        const upgraded = this._createRemotePlayerInstance(playerId, snapshot);
+        upgraded.targetPosition.copy(remote.targetPosition);
+        upgraded.targetRotationY = remote.targetRotationY;
+        upgraded.lastSeen = remote.lastSeen;
+        upgraded.estimatedSpeed = remote.estimatedSpeed || 0;
+        if (remote.chatBubble) {
+          upgraded.chatBubble.message = remote.chatBubble.message || "";
+          upgraded.chatBubble.typing = remote.chatBubble.typing === true;
+          upgraded.chatBubble.expiresAt = Number(remote.chatBubble.expiresAt) || 0;
+          if (upgraded.chatBubble.typing) {
+            this._drawChatBubble(upgraded.chatBubble, "...");
+            upgraded.chatBubble.sprite.visible = true;
+          } else if (upgraded.chatBubble.message && upgraded.chatBubble.expiresAt > Date.now()) {
+            this._drawChatBubble(upgraded.chatBubble, upgraded.chatBubble.message);
+            upgraded.chatBubble.sprite.visible = true;
+          }
+        }
+        upgraded.object3D.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+        upgraded.object3D.rotation.y = snapshot.rotationY;
+        upgraded.lastPosition.copy(upgraded.object3D.position);
+        upgraded.labelAnchorY = this._estimateLabelAnchorY(upgraded.object3D);
+        upgraded.object3D.userData.labelAnchorY = upgraded.labelAnchorY;
+        this.scene.add(upgraded.object3D);
+        this.remotePlayers.set(playerId, upgraded);
       }
     }
     _setupAnimations(clips) {
@@ -48274,6 +49084,295 @@
       this.alignmentOffsetSinSum = 0;
       this.alignmentOffsetCosSum = 0;
     }
+    _isolateVisualMaterials(root) {
+      if (!root) {
+        return;
+      }
+      root.traverse((node) => {
+        if (!node?.isMesh || !node.material) {
+          return;
+        }
+        if (Array.isArray(node.material)) {
+          node.material = node.material.map((material) => material?.clone ? material.clone() : material);
+        } else if (node.material?.clone) {
+          node.material = node.material.clone();
+        }
+      });
+    }
+    _applyColorToVisual(root, colorHex) {
+      const safe = normalizeHexColor(colorHex);
+      const accent = lightenHexColor(safe, 0.38);
+      let meshIndex = 0;
+      root.traverse((node) => {
+        if (!node?.isMesh || !node.material) {
+          return;
+        }
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        for (const material of materials) {
+          if (!material?.color) {
+            continue;
+          }
+          material.color.set(meshIndex === 0 ? safe : accent);
+          meshIndex += 1;
+        }
+      });
+    }
+    _attachChatBubble(ownerObject3D) {
+      if (!ownerObject3D) {
+        return null;
+      }
+      if (ownerObject3D.userData?.chatBubble) {
+        return ownerObject3D.userData.chatBubble;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 192;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return null;
+      }
+      const texture = new CanvasTexture(canvas);
+      texture.colorSpace = SRGBColorSpace;
+      texture.minFilter = LinearFilter;
+      texture.magFilter = LinearFilter;
+      const material = new SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false
+      });
+      const sprite = new Sprite(material);
+      sprite.position.set(0, 4.6, 0);
+      sprite.scale.set(6.2, 2.45, 1);
+      sprite.renderOrder = 3e3;
+      sprite.visible = false;
+      ownerObject3D.add(sprite);
+      const bubble = {
+        canvas,
+        ctx,
+        texture,
+        sprite,
+        message: "",
+        typing: false,
+        expiresAt: 0
+      };
+      this._drawChatBubble(bubble, "");
+      ownerObject3D.userData.chatBubble = bubble;
+      return bubble;
+    }
+    _attachNameTag(ownerObject3D) {
+      if (!ownerObject3D) {
+        return null;
+      }
+      if (ownerObject3D.userData?.nameTag) {
+        return ownerObject3D.userData.nameTag;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = 384;
+      canvas.height = 96;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return null;
+      }
+      const texture = new CanvasTexture(canvas);
+      texture.colorSpace = SRGBColorSpace;
+      texture.minFilter = LinearFilter;
+      texture.magFilter = LinearFilter;
+      const material = new SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false
+      });
+      const sprite = new Sprite(material);
+      sprite.position.set(0, 3.9, 0);
+      sprite.scale.set(4.4, 1.1, 1);
+      sprite.renderOrder = 2900;
+      ownerObject3D.add(sprite);
+      const tag = { canvas, ctx, texture, sprite, text: DEFAULT_PLAYER_NAME };
+      ownerObject3D.userData.nameTag = tag;
+      this._setNameTagText(tag, DEFAULT_PLAYER_NAME);
+      return tag;
+    }
+    _setNameTagText(tag, text) {
+      if (!tag?.ctx) {
+        return;
+      }
+      const safe = sanitizePlayerName(text);
+      tag.text = safe;
+      const { ctx, canvas, texture } = tag;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const pad = 10;
+      const w = canvas.width - pad * 2;
+      const h = canvas.height - pad * 2;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.76)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.36)";
+      ctx.lineWidth = 2;
+      const radius = 12;
+      ctx.beginPath();
+      ctx.moveTo(pad + radius, pad);
+      ctx.lineTo(pad + w - radius, pad);
+      ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + radius);
+      ctx.lineTo(pad + w, pad + h - radius);
+      ctx.quadraticCurveTo(pad + w, pad + h, pad + w - radius, pad + h);
+      ctx.lineTo(pad + radius, pad + h);
+      ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - radius);
+      ctx.lineTo(pad, pad + radius);
+      ctx.quadraticCurveTo(pad, pad, pad + radius, pad);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = '700 30px Consolas, "Courier New", monospace';
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(safe, canvas.width * 0.5, canvas.height * 0.54);
+      texture.needsUpdate = true;
+      tag.sprite.visible = true;
+    }
+    _drawChatBubble(bubble, text) {
+      if (!bubble?.ctx) {
+        return;
+      }
+      const { ctx, canvas, texture } = bubble;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const content = String(text || "").trim();
+      if (!content) {
+        texture.needsUpdate = true;
+        return;
+      }
+      const pad = 12;
+      const w = canvas.width - pad * 2;
+      const h = canvas.height - 32;
+      const r = 20;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
+      ctx.strokeStyle = "rgba(8, 8, 8, 0.92)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(pad + r, pad);
+      ctx.lineTo(pad + w - r, pad);
+      ctx.quadraticCurveTo(pad + w, pad, pad + w, pad + r);
+      ctx.lineTo(pad + w, pad + h - r);
+      ctx.quadraticCurveTo(pad + w, pad + h, pad + w - r, pad + h);
+      ctx.lineTo(canvas.width * 0.5 + 26, pad + h);
+      ctx.lineTo(canvas.width * 0.5, canvas.height - 6);
+      ctx.lineTo(canvas.width * 0.5 - 26, pad + h);
+      ctx.lineTo(pad + r, pad + h);
+      ctx.quadraticCurveTo(pad, pad + h, pad, pad + h - r);
+      ctx.lineTo(pad, pad + r);
+      ctx.quadraticCurveTo(pad, pad, pad + r, pad);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#0a0a0a";
+      ctx.font = '700 34px Consolas, "Courier New", monospace';
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const clampedText = content.slice(0, CHAT_BUBBLE_MAX_CHARS);
+      const words = clampedText.split(/\s+/).filter(Boolean);
+      const lines = [];
+      let line = "";
+      for (const word of words) {
+        const candidate = line ? `${line} ${word}` : word;
+        if (ctx.measureText(candidate).width < w - 40) {
+          line = candidate;
+        } else {
+          if (line) {
+            lines.push(line);
+          }
+          line = word;
+        }
+        if (lines.length >= 2) {
+          break;
+        }
+      }
+      if (line && lines.length < 2) {
+        lines.push(line);
+      }
+      if (lines.length === 0) {
+        lines.push(clampedText);
+      }
+      const lineHeight = 38;
+      const startY = canvas.height * 0.5 - (lines.length - 1) * lineHeight * 0.5 - 10;
+      for (let i = 0; i < lines.length; i += 1) {
+        ctx.fillText(lines[i], canvas.width * 0.5, startY + i * lineHeight);
+      }
+      texture.needsUpdate = true;
+    }
+    _setChatBubbleMessage(bubble, message, durationMs) {
+      if (!bubble) {
+        return;
+      }
+      const sanitized = String(message || "").trim().slice(0, CHAT_BUBBLE_MAX_CHARS);
+      if (!sanitized) {
+        return;
+      }
+      bubble.message = sanitized;
+      bubble.typing = false;
+      bubble.expiresAt = Date.now() + Math.max(800, Number(durationMs) || CHAT_BUBBLE_DURATION_MS);
+      this._drawChatBubble(bubble, bubble.message);
+      bubble.sprite.visible = true;
+    }
+    _resetChatBubble(bubble) {
+      if (!bubble) {
+        return;
+      }
+      bubble.message = "";
+      bubble.typing = false;
+      bubble.expiresAt = 0;
+      bubble.sprite.visible = false;
+      this._drawChatBubble(bubble, "");
+    }
+    _setChatBubbleTyping(bubble, typing) {
+      if (!bubble) {
+        return;
+      }
+      bubble.typing = typing === true;
+      if (bubble.typing) {
+        this._drawChatBubble(bubble, "...");
+        bubble.sprite.visible = true;
+        return;
+      }
+      if (bubble.message && bubble.expiresAt > Date.now()) {
+        this._drawChatBubble(bubble, bubble.message);
+        bubble.sprite.visible = true;
+        return;
+      }
+      bubble.sprite.visible = false;
+    }
+    _updateChatBubble(bubble, nowMs) {
+      if (!bubble) {
+        return;
+      }
+      if (bubble.typing) {
+        bubble.sprite.visible = true;
+        return;
+      }
+      if (bubble.message && bubble.expiresAt > nowMs) {
+        bubble.sprite.visible = true;
+        return;
+      }
+      bubble.sprite.visible = false;
+    }
+    _updateLabelAnchors() {
+      const applyAnchor = (ownerObject3D, nameTag, chatBubble, cachedAnchor = null) => {
+        if (!ownerObject3D) {
+          return;
+        }
+        const anchor = Number.isFinite(cachedAnchor) ? cachedAnchor : Number(ownerObject3D.userData?.labelAnchorY) || this._estimateLabelAnchorY(ownerObject3D);
+        ownerObject3D.userData.labelAnchorY = anchor;
+        if (nameTag?.sprite) {
+          nameTag.sprite.position.y = anchor + 0.18;
+        }
+        if (chatBubble?.sprite) {
+          chatBubble.sprite.position.y = anchor + 1.05;
+        }
+      };
+      applyAnchor(this.localPlayer, this.localNameTag, this.localChatBubble, this.localPlayer?.userData?.labelAnchorY);
+      for (const remote of this.remotePlayers.values()) {
+        applyAnchor(remote.object3D, remote.nameTag, remote.chatBubble, remote.labelAnchorY);
+      }
+    }
   };
 
   // public/game/MovementSystem.js
@@ -48470,7 +49569,21 @@
       };
     }
     _bindInput() {
+      const shouldIgnoreKeyInput = () => {
+        const active = document?.activeElement;
+        if (!active) {
+          return false;
+        }
+        const tag = String(active.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "textarea" || tag === "select") {
+          return true;
+        }
+        return active.isContentEditable === true;
+      };
       window.addEventListener("keydown", (event) => {
+        if (shouldIgnoreKeyInput()) {
+          return;
+        }
         switch (event.code) {
           case "KeyW":
             this.input.forward = true;
@@ -48570,8 +49683,8 @@
         lineSegments = new Float32Array(array);
       }
       const instanceBuffer = new InstancedInterleavedBuffer(lineSegments, 6, 1);
-      this.setAttribute("instanceStart", new InterleavedBufferAttribute(instanceBuffer, 3, 0));
-      this.setAttribute("instanceEnd", new InterleavedBufferAttribute(instanceBuffer, 3, 3));
+      this.setAttribute("instanceStart", new InterleavedBufferAttribute2(instanceBuffer, 3, 0));
+      this.setAttribute("instanceEnd", new InterleavedBufferAttribute2(instanceBuffer, 3, 3));
       this.computeBoundingBox();
       this.computeBoundingSphere();
       return this;
@@ -48584,8 +49697,8 @@
         colors = new Float32Array(array);
       }
       const instanceColorBuffer = new InstancedInterleavedBuffer(colors, 6, 1);
-      this.setAttribute("instanceColorStart", new InterleavedBufferAttribute(instanceColorBuffer, 3, 0));
-      this.setAttribute("instanceColorEnd", new InterleavedBufferAttribute(instanceColorBuffer, 3, 3));
+      this.setAttribute("instanceColorStart", new InterleavedBufferAttribute2(instanceColorBuffer, 3, 0));
+      this.setAttribute("instanceColorEnd", new InterleavedBufferAttribute2(instanceColorBuffer, 3, 3));
       return this;
     }
     fromWireframeGeometry(geometry) {
@@ -49299,8 +50412,8 @@
         lineDistances[j + 1] = lineDistances[j] + _start2.distanceTo(_end2);
       }
       const instanceDistanceBuffer = new InstancedInterleavedBuffer(lineDistances, 2, 1);
-      geometry.setAttribute("instanceDistanceStart", new InterleavedBufferAttribute(instanceDistanceBuffer, 1, 0));
-      geometry.setAttribute("instanceDistanceEnd", new InterleavedBufferAttribute(instanceDistanceBuffer, 1, 1));
+      geometry.setAttribute("instanceDistanceStart", new InterleavedBufferAttribute2(instanceDistanceBuffer, 1, 0));
+      geometry.setAttribute("instanceDistanceEnd", new InterleavedBufferAttribute2(instanceDistanceBuffer, 1, 1));
       return this;
     }
     raycast(raycaster, intersects) {
@@ -49549,8 +50662,16 @@
       this.redoStack = [];
       this.sendStrokeCallback = () => {
       };
+      this.sendStrokeLiveCallback = () => {
+      };
       this.strokeCounter = 0;
       this.strokeRenderOrderCounter = 20;
+      this.liveStrokeCounter = 0;
+      this.activeLiveStrokeId = null;
+      this.activeStrokeStartedAt = 0;
+      this.lastLiveStrokeSendMs = 0;
+      this.liveStrokeSendIntervalMs = 70;
+      this.remoteLiveStrokeIndex = /* @__PURE__ */ new Map();
       this.hasPointer = false;
       this.previewMesh = this._createPreviewMesh();
       this.scene.add(this.previewMesh);
@@ -49575,6 +50696,10 @@
     }
     setStrokeSendCallback(callback) {
       this.sendStrokeCallback = callback || (() => {
+      });
+    }
+    setStrokeLiveSendCallback(callback) {
+      this.sendStrokeLiveCallback = callback || (() => {
       });
     }
     isDrawModeActive() {
@@ -49716,7 +50841,14 @@
       }
     }
     applyStrokePacket(packet) {
-      if (!packet || !packet.id || this.seenStrokeIds.has(packet.id)) {
+      if (!packet || !packet.id) {
+        return;
+      }
+      if (packet.live === true) {
+        this._applyLiveStrokePacket(packet);
+        return;
+      }
+      if (this.seenStrokeIds.has(packet.id)) {
         return;
       }
       if (packet.erase === true) {
@@ -49743,6 +50875,9 @@
       };
       this._insertStroke(patch, stroke, false);
       this.seenStrokeIds.add(stroke.id);
+      if (packet.playerId && packet.liveId) {
+        this._clearRemoteLiveStroke(packet.playerId, packet.liveId);
+      }
     }
     _bindInput() {
       window.addEventListener("keydown", (event) => {
@@ -49791,7 +50926,10 @@
         this.activeStroke = [localPoint];
         this.lastPaintPoint = localPoint;
         this.activePreviewPoint = this._createInitialPreviewPoint(localPoint);
+        this.activeLiveStrokeId = this._nextLiveStrokeId();
+        this.activeStrokeStartedAt = Date.now();
         this._updateActiveStrokeRenderable();
+        this._emitLiveStrokePacket();
       });
       domElement.addEventListener("pointermove", (event) => {
         this._updatePointerNdc(event);
@@ -49804,6 +50942,8 @@
         if (!this.drawMode || !this.pointerDown) {
           this.pointerDown = false;
           this.activePointerId = null;
+          this._emitLiveStrokePacket(true);
+          this.activeLiveStrokeId = null;
           this._clearActiveStrokeRenderable();
           this.activePreviewPoint = null;
           return;
@@ -49821,6 +50961,8 @@
         if (this.uiManager.getTool() === "erase") {
           this._clearActiveStrokeRenderable();
           this.activePreviewPoint = null;
+          this._emitLiveStrokePacket(true);
+          this.activeLiveStrokeId = null;
           return;
         }
         const finalizedPoints = this.activeStroke.slice();
@@ -49831,6 +50973,8 @@
           }
         }
         if (finalizedPoints.length < 2 || !this.activePatch) {
+          this._emitLiveStrokePacket(true);
+          this.activeLiveStrokeId = null;
           this.activeStroke = [];
           this.lastPaintPoint = null;
           this.activePreviewPoint = null;
@@ -49840,6 +50984,8 @@
         const simplified = simplifyStrokeRDP(finalizedPoints, this.simplificationEpsilon);
         const bounded = resamplePoints(simplified, this.maxPointsPerStroke);
         if (bounded.length < 2) {
+          this._emitLiveStrokePacket(true);
+          this.activeLiveStrokeId = null;
           this.activeStroke = [];
           this.lastPaintPoint = null;
           this.activePreviewPoint = null;
@@ -49852,8 +50998,11 @@
           thickness: clamp3(this.uiManager.getBrushSize(), 1, 24),
           points: bounded,
           createdAt: Date.now(),
+          liveId: this.activeLiveStrokeId,
           renderOrder: this._nextStrokeRenderOrder()
         };
+        this._emitLiveStrokePacket(true);
+        this.activeLiveStrokeId = null;
         this._clearActiveStrokeRenderable();
         this._insertStroke(this.activePatch, stroke, true);
         this.activeStroke = [];
@@ -49875,6 +51024,8 @@
       this.pointerDown = false;
       this.activePointerId = null;
       this.activeStroke = [];
+      this.activeLiveStrokeId = null;
+      this.activeStrokeStartedAt = 0;
       this.lastPaintPoint = null;
       this.activePreviewPoint = null;
       this._clearActiveStrokeRenderable();
@@ -49884,11 +51035,14 @@
       this.uiManager.setDrawPrompt(true, "Drawing mode - hold mouse to paint, Esc to exit");
     }
     _exitDrawMode() {
+      this._emitLiveStrokePacket(true);
       this.drawMode = false;
       this.pointerDown = false;
       this.activePointerId = null;
       this.activePatch = null;
       this.activeStroke = [];
+      this.activeLiveStrokeId = null;
+      this.activeStrokeStartedAt = 0;
       this.lastPaintPoint = null;
       this.activePreviewPoint = null;
       this._clearActiveStrokeRenderable();
@@ -49915,6 +51069,10 @@
       this.activePreviewPoint = localPoint;
       this._updateActiveStrokeRenderable();
       if (!this.lastPaintPoint) {
+        if (now3 - this.lastLiveStrokeSendMs >= this.liveStrokeSendIntervalMs) {
+          this._emitLiveStrokePacket();
+          this.lastLiveStrokeSendMs = now3;
+        }
         return;
       }
       const dx = localPoint.x - this.lastPaintPoint.x;
@@ -49924,6 +51082,10 @@
         this.lastPaintPoint = localPoint;
         this.activePreviewPoint = localPoint;
         this._updateActiveStrokeRenderable();
+      }
+      if (now3 - this.lastLiveStrokeSendMs >= this.liveStrokeSendIntervalMs) {
+        this._emitLiveStrokePacket();
+        this.lastLiveStrokeSendMs = now3;
       }
     }
     _shouldRunWallScan() {
@@ -50217,6 +51379,7 @@
         group,
         liveStrokes: [],
         strokeArchive: /* @__PURE__ */ new Map(),
+        liveStrokePreviews: /* @__PURE__ */ new Map(),
         bakedLayer: null
       };
       this.patches.set(patch.key, patch);
@@ -50424,6 +51587,11 @@
       for (const stroke of patch.strokeArchive.values()) {
         this._drawStrokeToPatchCanvas(patch, stroke);
       }
+      if (patch.liveStrokePreviews?.size) {
+        for (const stroke of patch.liveStrokePreviews.values()) {
+          this._drawStrokeToPatchCanvas(patch, stroke);
+        }
+      }
       if (previewStroke) {
         this._drawStrokeToPatchCanvas(patch, previewStroke);
       }
@@ -50506,6 +51674,62 @@
         this._removeStrokeFromPatch(patch, id);
       }
     }
+    _applyLiveStrokePacket(packet) {
+      const playerId = packet.playerId || "remote";
+      const liveId = `${playerId}:${packet.id}`;
+      if (packet.end === true) {
+        this._removeLiveStrokePreviewById(liveId);
+        return;
+      }
+      if (!packet.patch || !Array.isArray(packet.points)) {
+        return;
+      }
+      const patch = this._getOrCreatePatchFromPacket(packet.patchKey, packet.patch);
+      const points = this._decodePoints(packet.points, packet.q || this.quantization);
+      if (points.length < 2) {
+        return;
+      }
+      const stroke = {
+        id: liveId,
+        color: packet.color || "#ff3d3d",
+        thickness: clamp3(Number(packet.thickness) || 6, 1, 24),
+        points,
+        createdAt: packet.createdAt || Date.now(),
+        playerId
+      };
+      patch.liveStrokePreviews.set(liveId, stroke);
+      this.remoteLiveStrokeIndex.set(liveId, patch.key);
+      this._ensureBakedLayer(patch);
+      this._renderPatchCanvas(patch);
+    }
+    _removeLiveStrokePreviewById(liveId) {
+      const patchKey = this.remoteLiveStrokeIndex.get(liveId);
+      if (!patchKey) {
+        return;
+      }
+      const patch = this.patches.get(patchKey);
+      if (patch?.liveStrokePreviews?.has(liveId)) {
+        patch.liveStrokePreviews.delete(liveId);
+        this._renderPatchCanvas(patch);
+      }
+      this.remoteLiveStrokeIndex.delete(liveId);
+    }
+    _clearRemoteLiveStroke(playerId, strokeId) {
+      if (!playerId || !strokeId) {
+        return;
+      }
+      this._removeLiveStrokePreviewById(`${playerId}:${strokeId}`);
+    }
+    clearRemoteLiveStrokesForPlayer(playerId) {
+      if (!playerId) {
+        return;
+      }
+      const prefix = `${playerId}:`;
+      const liveIds = Array.from(this.remoteLiveStrokeIndex.keys()).filter((key) => key.startsWith(prefix));
+      for (const liveId of liveIds) {
+        this._removeLiveStrokePreviewById(liveId);
+      }
+    }
     _snapshotStrokeForUndo(stroke, patch) {
       return {
         id: stroke.id,
@@ -50573,26 +51797,72 @@
       }
       stroke.renderable = null;
     }
+    _nextLiveStrokeId() {
+      this.liveStrokeCounter += 1;
+      return `live-${Date.now().toString(36)}-${this.liveStrokeCounter.toString(36)}`;
+    }
+    _encodePatchPacket(patch) {
+      return {
+        key: patch.key,
+        meshId: patch.meshId,
+        center: [patch.center.x, patch.center.y, patch.center.z],
+        normal: [patch.normal.x, patch.normal.y, patch.normal.z],
+        tangent: [patch.tangent.x, patch.tangent.y, patch.tangent.z],
+        bitangent: [patch.bitangent.x, patch.bitangent.y, patch.bitangent.z],
+        halfSize: patch.halfSize,
+        halfWidth: patch.halfWidth,
+        halfHeight: patch.halfHeight,
+        minX: patch.minX,
+        maxX: patch.maxX,
+        minY: patch.minY,
+        maxY: patch.maxY
+      };
+    }
+    _emitLiveStrokePacket(end = false) {
+      if (!this.activeLiveStrokeId || !this.activePatch) {
+        return;
+      }
+      if (end) {
+        this.sendStrokeLiveCallback({
+          v: 1,
+          live: true,
+          id: this.activeLiveStrokeId,
+          patchKey: this.activePatch.key,
+          end: true,
+          createdAt: Date.now()
+        });
+        return;
+      }
+      const previewPoints = this.activeStroke.slice();
+      if (this.activePreviewPoint) {
+        const lastPoint = previewPoints[previewPoints.length - 1];
+        if (!lastPoint || lastPoint.x !== this.activePreviewPoint.x || lastPoint.y !== this.activePreviewPoint.y) {
+          previewPoints.push(this.activePreviewPoint);
+        }
+      }
+      if (previewPoints.length < 2) {
+        return;
+      }
+      this.sendStrokeLiveCallback({
+        v: 1,
+        live: true,
+        id: this.activeLiveStrokeId,
+        patchKey: this.activePatch.key,
+        patch: this._encodePatchPacket(this.activePatch),
+        color: this.uiManager.getBrushColor(),
+        thickness: clamp3(this.uiManager.getBrushSize(), 1, 24),
+        q: this.quantization,
+        points: this._encodePoints(previewPoints, this.quantization),
+        createdAt: this.activeStrokeStartedAt || Date.now()
+      });
+    }
     _encodeStrokePacket(patch, stroke) {
       return {
         v: 1,
         id: stroke.id,
         patchKey: patch.key,
-        patch: {
-          key: patch.key,
-          meshId: patch.meshId,
-          center: [patch.center.x, patch.center.y, patch.center.z],
-          normal: [patch.normal.x, patch.normal.y, patch.normal.z],
-          tangent: [patch.tangent.x, patch.tangent.y, patch.tangent.z],
-          bitangent: [patch.bitangent.x, patch.bitangent.y, patch.bitangent.z],
-          halfSize: patch.halfSize,
-          halfWidth: patch.halfWidth,
-          halfHeight: patch.halfHeight,
-          minX: patch.minX,
-          maxX: patch.maxX,
-          minY: patch.minY,
-          maxY: patch.maxY
-        },
+        liveId: stroke.liveId || null,
+        patch: this._encodePatchPacket(patch),
         color: stroke.color,
         thickness: stroke.thickness,
         q: this.quantization,
@@ -50860,6 +52130,8 @@
       this.apiBaseUrl = this._normalizeBaseUrl(options.apiBaseUrl);
       this.playerSendAccumulator = 0;
       this.playerSendInterval = 0.05;
+      this.profileHeartbeatAccumulator = 0;
+      this.profileHeartbeatInterval = 1.25;
       this.selfId = null;
       this._bindEvents();
     }
@@ -50886,7 +52158,7 @@
           }
         }
       } catch (error) {
-        console.warn("State bootstrap failed, continuing offline:", error);
+        await this._bootstrapLegacyFallback(error);
       } finally {
         clearTimeout(timeout);
       }
@@ -50907,12 +52179,50 @@
       }
       return trimmed.replace(/\/$/, "");
     }
+    async _bootstrapLegacyFallback(rootError) {
+      try {
+        const statusResponse = await fetch(this._buildApiUrl("/api/status"), { cache: "no-store" });
+        if (statusResponse.ok) {
+          const statusPayload = await statusResponse.json();
+          const apiVersion = statusPayload?.apiVersion || "legacy";
+          if (!String(apiVersion).includes("strokes-v")) {
+            console.warn(
+              "[Sync] Backend API mismatch. Expected strokes-v* backend, got %o. Multiplayer players and stroke sync may fail until backend is updated.",
+              statusPayload
+            );
+          }
+        }
+      } catch {
+      }
+      try {
+        const drawingsResponse = await fetch(this._buildApiUrl("/api/drawings"), { cache: "no-store" });
+        if (!drawingsResponse.ok) {
+          throw new Error(`Legacy drawings request failed: ${drawingsResponse.status}`);
+        }
+        const drawings = await drawingsResponse.json();
+        if (Array.isArray(drawings) && drawings.length > 0) {
+          const looksLikeStrokePackets = drawings.every((entry) => entry && typeof entry === "object" && entry.patch && Array.isArray(entry.points));
+          if (looksLikeStrokePackets) {
+            this.drawingSystem.applyInitialStrokes(drawings);
+            return;
+          }
+        }
+      } catch (legacyError) {
+        console.warn("Legacy drawings bootstrap failed:", legacyError);
+      }
+      console.warn("State bootstrap failed, continuing offline:", rootError);
+    }
     connect() {
       this.socketManager.connect();
     }
     update(deltaSeconds) {
       if (!this.socketManager.connected) {
         return;
+      }
+      this.profileHeartbeatAccumulator += deltaSeconds;
+      if (this.profileHeartbeatAccumulator >= this.profileHeartbeatInterval) {
+        this.profileHeartbeatAccumulator = 0;
+        this.socketManager.emit("player:update", this.playerController.getLocalNetworkState());
       }
       this.playerSendAccumulator += deltaSeconds;
       if (this.playerSendAccumulator >= this.playerSendInterval) {
@@ -50921,16 +52231,38 @@
       }
     }
     _bindEvents() {
+      this.uiManager.bindChat(
+        (message) => {
+          this.playerController.setLocalChatMessage(message);
+          if (this.socketManager.connected) {
+            this.socketManager.emit("chat:message", { message });
+          }
+        },
+        (typing) => {
+          this.playerController.setLocalTyping(typing === true);
+          if (this.socketManager.connected) {
+            this.socketManager.emit("chat:typing", { typing: typing === true });
+          }
+        }
+      );
       this.drawingSystem.setStrokeSendCallback((packet) => {
         this.socketManager.emit("stroke:add", packet);
+      });
+      this.drawingSystem.setStrokeLiveSendCallback((packet) => {
+        this.socketManager.emit("stroke:live", packet);
       });
       this.socketManager.on("connect", ({ id }) => {
         this.selfId = id;
         this.uiManager.setConnectionStatus(true);
-        this.socketManager.emit("player:join", this.playerController.getLocalNetworkState());
+        this.playerController.setLocalPlayerId(id);
+        const profile = this.playerController.getLocalNetworkState();
+        this.socketManager.emit("player:join", profile);
+        this.socketManager.emit("player:update", profile);
+        this._verifyServerFeatureSupport();
       });
       this.socketManager.on("disconnect", () => {
         this.uiManager.setConnectionStatus(false);
+        this.playerController.setLocalTyping(false);
       });
       this.socketManager.on("connect_error", () => {
         this.uiManager.setConnectionStatus(false);
@@ -50955,12 +52287,51 @@
           return;
         }
         this.playerController.upsertRemotePlayer(payload.id, payload);
+        if (typeof payload.color === "string") {
+          this.playerController.setRemotePlayerColor(payload.id, payload.color);
+        }
+        if (typeof payload.name === "string") {
+          this.playerController.setRemotePlayerName(payload.id, payload.name);
+        }
       });
       this.socketManager.on("player:leave", (payload) => {
         if (!payload || !payload.id) {
           return;
         }
+        this.drawingSystem.clearRemoteLiveStrokesForPlayer(payload.id);
         this.playerController.removeRemotePlayer(payload.id);
+      });
+      this.socketManager.on("chat:message", (payload) => {
+        if (!payload || typeof payload.id !== "string" || typeof payload.message !== "string") {
+          return;
+        }
+        if (payload.id === this.selfId) {
+          this.playerController.setLocalChatMessage(payload.message);
+          this.playerController.setLocalTyping(false);
+        } else {
+          this.playerController.setRemoteChatMessage(payload.id, payload.message);
+          this.playerController.setRemoteTyping(payload.id, false);
+        }
+      });
+      this.socketManager.on("chat:typing", (payload) => {
+        if (!payload || typeof payload.id !== "string") {
+          return;
+        }
+        const typing = payload.typing === true;
+        if (payload.id === this.selfId) {
+          this.playerController.setLocalTyping(typing);
+        } else {
+          this.playerController.setRemoteTyping(payload.id, typing);
+        }
+      });
+      this.socketManager.on("stroke:live", (packet) => {
+        if (!packet) {
+          return;
+        }
+        if (packet.playerId && packet.playerId === this.selfId) {
+          return;
+        }
+        this.drawingSystem.applyStrokePacket(packet);
       });
       this.socketManager.on("stroke:add", (packet) => {
         if (!packet) {
@@ -50971,6 +52342,28 @@
         }
         this.drawingSystem.applyStrokePacket(packet);
       });
+    }
+    async _verifyServerFeatureSupport() {
+      try {
+        const response = await fetch(this._buildApiUrl("/api/status"), {
+          cache: "no-store"
+        });
+        if (!response.ok) {
+          return;
+        }
+        const status = await response.json();
+        const apiVersion = String(status?.apiVersion || "").trim();
+        const features = status?.features || {};
+        const supportsChat = features.chat === true;
+        const supportsProfile = features.playerProfile === true;
+        if (!apiVersion.includes("chat-profile") || !supportsChat || !supportsProfile) {
+          console.warn(
+            "[Sync] Server lacks chat/profile sync support. Restart backend with latest server.js. status=%o",
+            status
+          );
+        }
+      } catch {
+      }
     }
   };
 
@@ -50986,9 +52379,15 @@
       this.loadingBarFill = this.root.getElementById("loading-progress-fill");
       this.instructionsOverlay = this.root.getElementById("instructions-overlay");
       this.startButton = this.root.getElementById("start-game-button");
+      this.playerNameInput = this.root.getElementById("player-name-input");
+      this.playerColorHexInput = this.root.getElementById("player-color-hex");
+      this.playerColorCodeLabel = this.root.getElementById("player-color-code");
+      this.playerColorSwatches = Array.from(this.root.querySelectorAll(".player-color-swatch"));
       this.connectionStatus = this.root.getElementById("connection-status");
       this.drawPrompt = this.root.getElementById("draw-prompt");
       this.drawHud = this.root.getElementById("draw-hud");
+      this.chatInput = this.root.getElementById("chat-input");
+      this.chatSendButton = this.root.getElementById("chat-send-button");
       this.colorWheelWrap = this.root.getElementById("stroke-color-wheel-wrap");
       this.colorWheel = this.root.getElementById("stroke-color-wheel");
       this.colorWheelCursor = this.root.getElementById("stroke-color-wheel-cursor");
@@ -51014,6 +52413,13 @@
       this.wheelDragging = false;
       this.drawModeActive = false;
       this.undoHandler = null;
+      this.selectedPlayerColor = "#1b69fa";
+      this.selectedPlayerName = "Writer";
+      this.playerColorChangeHandler = null;
+      this.chatSendHandler = null;
+      this.chatTypingHandler = null;
+      this.chatTyping = false;
+      this.chatTypingIdleTimer = null;
       this._bindInputs();
     }
     bindStart(handler) {
@@ -51022,8 +52428,27 @@
       }
       this.startButton.addEventListener("click", () => {
         this.instructionsOverlay?.classList.add("hidden");
-        handler();
+        handler({
+          playerColor: this.getSelectedPlayerColor(),
+          playerName: this.getSelectedPlayerName()
+        });
       });
+    }
+    bindPlayerColorChange(handler) {
+      this.playerColorChangeHandler = typeof handler === "function" ? handler : null;
+    }
+    bindChat(sendHandler, typingHandler) {
+      this.chatSendHandler = typeof sendHandler === "function" ? sendHandler : null;
+      this.chatTypingHandler = typeof typingHandler === "function" ? typingHandler : null;
+    }
+    getSelectedPlayerColor() {
+      return this.selectedPlayerColor || "#1b69fa";
+    }
+    getSelectedPlayerName() {
+      return this.selectedPlayerName || "Writer";
+    }
+    isChatFocused() {
+      return this.chatInput && document.activeElement === this.chatInput;
     }
     setLoadingProgress(progressRatio, label = "Loading assets") {
       const clamped = Math.max(0, Math.min(1, progressRatio || 0));
@@ -51120,6 +52545,7 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       this.debugPanel.textContent = `FPS ${stats.fps.toFixed(1)} | Draw ${stats.drawCalls} | Triangles ${stats.triangles} | Memory ${memory}`;
     }
     _bindInputs() {
+      this._bindIntroInputs();
       if (this.colorWheel && this.colorWheelCursor) {
         this._initColorWheel();
       }
@@ -51170,6 +52596,9 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
         });
       }
       window.addEventListener("keydown", (event) => {
+        if (this.isChatFocused()) {
+          return;
+        }
         if (!this.drawModeActive) {
           return;
         }
@@ -51181,6 +52610,127 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
         this._invokeUndo();
       });
       this._syncColorPreview(this.brushColor);
+      this._bindChatInputs();
+    }
+    _bindIntroInputs() {
+      const sanitizeName = (value) => {
+        const collapsed = String(value || "").replace(/\s+/g, " ").trim();
+        const trimmed = collapsed.slice(0, 18);
+        return trimmed || "Writer";
+      };
+      const normalizeHex = (value) => {
+        const input = String(value || "").trim().toLowerCase();
+        if (/^#[0-9a-f]{6}$/.test(input)) {
+          return input;
+        }
+        return null;
+      };
+      if (this.playerNameInput) {
+        this.selectedPlayerName = sanitizeName(this.playerNameInput.value);
+        this.playerNameInput.value = this.selectedPlayerName;
+        this.playerNameInput.addEventListener("input", () => {
+          this.selectedPlayerName = sanitizeName(this.playerNameInput.value);
+        });
+        this.playerNameInput.addEventListener("blur", () => {
+          this.selectedPlayerName = sanitizeName(this.playerNameInput.value);
+          this.playerNameInput.value = this.selectedPlayerName;
+        });
+      }
+      const applyPlayerColor = (nextColor) => {
+        const normalized = normalizeHex(nextColor);
+        if (!normalized) {
+          return;
+        }
+        this.selectedPlayerColor = normalized;
+        if (this.playerColorHexInput && this.playerColorHexInput.value.toLowerCase() !== normalized) {
+          this.playerColorHexInput.value = normalized;
+        }
+        if (this.playerColorCodeLabel) {
+          this.playerColorCodeLabel.textContent = normalized;
+        }
+        for (const swatch of this.playerColorSwatches) {
+          swatch.classList.toggle("active", String(swatch.dataset.color || "").toLowerCase() === normalized);
+        }
+        if (this.playerColorChangeHandler) {
+          this.playerColorChangeHandler(normalized);
+        }
+      };
+      if (this.playerColorHexInput) {
+        const initial = normalizeHex(this.playerColorHexInput.value);
+        if (initial) {
+          this.selectedPlayerColor = initial;
+        }
+        this.playerColorHexInput.addEventListener("input", () => {
+          applyPlayerColor(this.playerColorHexInput.value);
+        });
+      }
+      for (const swatch of this.playerColorSwatches) {
+        swatch.addEventListener("click", () => {
+          applyPlayerColor(swatch.dataset.color || "");
+        });
+      }
+      applyPlayerColor(this.selectedPlayerColor);
+    }
+    _bindChatInputs() {
+      if (!this.chatInput || !this.chatSendButton) {
+        return;
+      }
+      const setTyping = (typing) => {
+        const next = typing === true;
+        if (this.chatTyping === next) {
+          return;
+        }
+        this.chatTyping = next;
+        if (this.chatTypingHandler) {
+          this.chatTypingHandler(next);
+        }
+      };
+      const scheduleTypingIdle = () => {
+        if (this.chatTypingIdleTimer) {
+          clearTimeout(this.chatTypingIdleTimer);
+        }
+        this.chatTypingIdleTimer = setTimeout(() => {
+          setTyping(false);
+        }, 900);
+      };
+      const sendCurrentMessage = () => {
+        const message = String(this.chatInput.value || "").trim();
+        if (!message) {
+          setTyping(false);
+          return;
+        }
+        if (this.chatSendHandler) {
+          this.chatSendHandler(message);
+        }
+        this.chatInput.value = "";
+        setTyping(false);
+      };
+      this.chatInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          sendCurrentMessage();
+          return;
+        }
+        if (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete") {
+          setTyping(true);
+          scheduleTypingIdle();
+        }
+      });
+      this.chatInput.addEventListener("input", () => {
+        if (this.chatInput.value.trim().length > 0) {
+          setTyping(true);
+          scheduleTypingIdle();
+        } else {
+          setTyping(false);
+        }
+      });
+      this.chatInput.addEventListener("blur", () => {
+        setTyping(false);
+      });
+      this.chatSendButton.addEventListener("click", () => {
+        sendCurrentMessage();
+        this.chatInput.focus();
+      });
     }
     _invokeUndo() {
       if (this.undoHandler) {
@@ -51499,7 +53049,18 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       this.socketManager = null;
       this.syncSystem = null;
       this.runtimeConfig = getRuntimeConfig();
+      this.pendingPlayerColor = this.ui.getSelectedPlayerColor();
+      this.pendingPlayerName = this.ui.getSelectedPlayerName();
       this.boundTick = this._tick.bind(this);
+      this.ui.bindPlayerColorChange((colorHex) => {
+        this.pendingPlayerColor = colorHex;
+        if (this.playerController) {
+          this.playerController.setLocalPlayerColor(colorHex);
+        }
+        if (this.socketManager?.connected && this.playerController) {
+          this.socketManager.emit("player:update", this.playerController.getLocalNetworkState());
+        }
+      });
       this._bindStartOverlay();
       this._bindDebugToggle();
       this._exposeDebugApi();
@@ -51523,6 +53084,8 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       this.rendererSystem.setSceneAndCamera(this.sceneManager.getScene(), this.camera);
       this.playerController = new PlayerController(this.sceneManager.getScene(), this.sceneManager.loadingManager);
       await this.playerController.loadLocalPlayer();
+      this.playerController.setLocalPlayerColor(this.pendingPlayerColor);
+      this.playerController.setLocalPlayerName(this.pendingPlayerName);
       this.ui.setLoadingProgress(0.86, "Preparing player");
       this.cameraController = new CameraController(this.camera);
       this.cameraController.setTarget(this.playerController.getLocalPlayer());
@@ -51565,7 +53128,20 @@ Input ${movement.inputActive ? "active" : "idle"} (${forwardAxis}/${strafeAxis})
       requestAnimationFrame(this.boundTick);
     }
     _bindStartOverlay() {
-      this.ui.bindStart(() => {
+      this.ui.bindStart(({ playerColor, playerName } = {}) => {
+        if (playerColor) {
+          this.pendingPlayerColor = playerColor;
+        }
+        if (playerName) {
+          this.pendingPlayerName = playerName;
+        }
+        if (this.playerController) {
+          this.playerController.setLocalPlayerColor(this.pendingPlayerColor);
+          this.playerController.setLocalPlayerName(this.pendingPlayerName);
+        }
+        if (this.socketManager?.connected && this.playerController) {
+          this.socketManager.emit("player:update", this.playerController.getLocalNetworkState());
+        }
         this.started = true;
       });
     }

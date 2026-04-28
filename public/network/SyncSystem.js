@@ -8,6 +8,8 @@ export class SyncSystem {
 
     this.playerSendAccumulator = 0;
     this.playerSendInterval = 0.05;
+    this.profileHeartbeatAccumulator = 0;
+    this.profileHeartbeatInterval = 1.25;
     this.selfId = null;
 
     this._bindEvents();
@@ -39,7 +41,7 @@ export class SyncSystem {
         }
       }
     } catch (error) {
-      console.warn('State bootstrap failed, continuing offline:', error);
+      await this._bootstrapLegacyFallback(error);
     } finally {
       clearTimeout(timeout);
     }
@@ -66,6 +68,51 @@ export class SyncSystem {
     return trimmed.replace(/\/$/, '');
   }
 
+  async _bootstrapLegacyFallback(rootError) {
+    // Gracefully handle older backends that only expose /api/drawings.
+    try {
+      const statusResponse = await fetch(this._buildApiUrl('/api/status'), { cache: 'no-store' });
+      if (statusResponse.ok) {
+        const statusPayload = await statusResponse.json();
+        const apiVersion = statusPayload?.apiVersion || 'legacy';
+        if (!String(apiVersion).includes('strokes-v')) {
+          console.warn(
+            '[Sync] Backend API mismatch. Expected strokes-v* backend, got %o. Multiplayer players and stroke sync may fail until backend is updated.',
+            statusPayload
+          );
+        }
+      }
+    } catch {
+      // Ignore status probing errors and continue to drawings probe.
+    }
+
+    try {
+      const drawingsResponse = await fetch(this._buildApiUrl('/api/drawings'), { cache: 'no-store' });
+      if (!drawingsResponse.ok) {
+        throw new Error(`Legacy drawings request failed: ${drawingsResponse.status}`);
+      }
+
+      const drawings = await drawingsResponse.json();
+      if (Array.isArray(drawings) && drawings.length > 0) {
+        const looksLikeStrokePackets = drawings.every((entry) => (
+          entry
+          && typeof entry === 'object'
+          && entry.patch
+          && Array.isArray(entry.points)
+        ));
+
+        if (looksLikeStrokePackets) {
+          this.drawingSystem.applyInitialStrokes(drawings);
+          return;
+        }
+      }
+    } catch (legacyError) {
+      console.warn('Legacy drawings bootstrap failed:', legacyError);
+    }
+
+    console.warn('State bootstrap failed, continuing offline:', rootError);
+  }
+
   connect() {
     this.socketManager.connect();
   }
@@ -73,6 +120,12 @@ export class SyncSystem {
   update(deltaSeconds) {
     if (!this.socketManager.connected) {
       return;
+    }
+
+    this.profileHeartbeatAccumulator += deltaSeconds;
+    if (this.profileHeartbeatAccumulator >= this.profileHeartbeatInterval) {
+      this.profileHeartbeatAccumulator = 0;
+      this.socketManager.emit('player:update', this.playerController.getLocalNetworkState());
     }
 
     this.playerSendAccumulator += deltaSeconds;
@@ -83,18 +136,41 @@ export class SyncSystem {
   }
 
   _bindEvents() {
+    this.uiManager.bindChat(
+      (message) => {
+        this.playerController.setLocalChatMessage(message);
+        if (this.socketManager.connected) {
+          this.socketManager.emit('chat:message', { message });
+        }
+      },
+      (typing) => {
+        this.playerController.setLocalTyping(typing === true);
+        if (this.socketManager.connected) {
+          this.socketManager.emit('chat:typing', { typing: typing === true });
+        }
+      }
+    );
+
     this.drawingSystem.setStrokeSendCallback((packet) => {
       this.socketManager.emit('stroke:add', packet);
+    });
+    this.drawingSystem.setStrokeLiveSendCallback((packet) => {
+      this.socketManager.emit('stroke:live', packet);
     });
 
     this.socketManager.on('connect', ({ id }) => {
       this.selfId = id;
       this.uiManager.setConnectionStatus(true);
-      this.socketManager.emit('player:join', this.playerController.getLocalNetworkState());
+      this.playerController.setLocalPlayerId(id);
+      const profile = this.playerController.getLocalNetworkState();
+      this.socketManager.emit('player:join', profile);
+      this.socketManager.emit('player:update', profile);
+      this._verifyServerFeatureSupport();
     });
 
     this.socketManager.on('disconnect', () => {
       this.uiManager.setConnectionStatus(false);
+      this.playerController.setLocalTyping(false);
     });
 
     this.socketManager.on('connect_error', () => {
@@ -124,13 +200,57 @@ export class SyncSystem {
         return;
       }
       this.playerController.upsertRemotePlayer(payload.id, payload);
+      if (typeof payload.color === 'string') {
+        this.playerController.setRemotePlayerColor(payload.id, payload.color);
+      }
+      if (typeof payload.name === 'string') {
+        this.playerController.setRemotePlayerName(payload.id, payload.name);
+      }
     });
 
     this.socketManager.on('player:leave', (payload) => {
       if (!payload || !payload.id) {
         return;
       }
+      this.drawingSystem.clearRemoteLiveStrokesForPlayer(payload.id);
       this.playerController.removeRemotePlayer(payload.id);
+    });
+
+    this.socketManager.on('chat:message', (payload) => {
+      if (!payload || typeof payload.id !== 'string' || typeof payload.message !== 'string') {
+        return;
+      }
+
+      if (payload.id === this.selfId) {
+        this.playerController.setLocalChatMessage(payload.message);
+        this.playerController.setLocalTyping(false);
+      } else {
+        this.playerController.setRemoteChatMessage(payload.id, payload.message);
+        this.playerController.setRemoteTyping(payload.id, false);
+      }
+    });
+
+    this.socketManager.on('chat:typing', (payload) => {
+      if (!payload || typeof payload.id !== 'string') {
+        return;
+      }
+
+      const typing = payload.typing === true;
+      if (payload.id === this.selfId) {
+        this.playerController.setLocalTyping(typing);
+      } else {
+        this.playerController.setRemoteTyping(payload.id, typing);
+      }
+    });
+
+    this.socketManager.on('stroke:live', (packet) => {
+      if (!packet) {
+        return;
+      }
+      if (packet.playerId && packet.playerId === this.selfId) {
+        return;
+      }
+      this.drawingSystem.applyStrokePacket(packet);
     });
 
     this.socketManager.on('stroke:add', (packet) => {
@@ -142,5 +262,31 @@ export class SyncSystem {
       }
       this.drawingSystem.applyStrokePacket(packet);
     });
+  }
+
+  async _verifyServerFeatureSupport() {
+    try {
+      const response = await fetch(this._buildApiUrl('/api/status'), {
+        cache: 'no-store'
+      });
+      if (!response.ok) {
+        return;
+      }
+
+      const status = await response.json();
+      const apiVersion = String(status?.apiVersion || '').trim();
+      const features = status?.features || {};
+      const supportsChat = features.chat === true;
+      const supportsProfile = features.playerProfile === true;
+
+      if (!apiVersion.includes('chat-profile') || !supportsChat || !supportsProfile) {
+        console.warn(
+          '[Sync] Server lacks chat/profile sync support. Restart backend with latest server.js. status=%o',
+          status
+        );
+      }
+    } catch {
+      // Non-fatal.
+    }
   }
 }
