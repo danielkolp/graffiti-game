@@ -24,6 +24,8 @@ export class DrawingSystem {
     this.tempPlane = new THREE.Plane();
     this.tempIntersectPoint = new THREE.Vector3();
     this.tempWorldPoint = new THREE.Vector3();
+    this.tempCursorWorldPoint = new THREE.Vector3();
+    this.tempCursorWorldNormal = new THREE.Vector3();
     this.tempVec = new THREE.Vector3();
     this.tempBasisMatrix = new THREE.Matrix4();
     this.probeRaycaster = new THREE.Raycaster();
@@ -137,6 +139,35 @@ this.redoStack = [];
   isDrawModeActive() {
     return this.drawMode;
   }
+
+  getLocalDrawCursorState() {
+    if (!this.drawMode || !this.activePatch || !this.activePreviewPoint) {
+      return null;
+    }
+
+    this.tempCursorWorldPoint
+      .copy(this.activePatch.center)
+      .addScaledVector(this.activePatch.tangent, this.activePreviewPoint.x)
+      .addScaledVector(this.activePatch.bitangent, this.activePreviewPoint.y)
+      .addScaledVector(this.activePatch.normal, this.surfaceOffset);
+
+    this.tempCursorWorldNormal.copy(this.activePatch.normal).normalize();
+
+    return {
+      active: true,
+      position: {
+        x: this.tempCursorWorldPoint.x,
+        y: this.tempCursorWorldPoint.y,
+        z: this.tempCursorWorldPoint.z
+      },
+      normal: {
+        x: this.tempCursorWorldNormal.x,
+        y: this.tempCursorWorldNormal.y,
+        z: this.tempCursorWorldNormal.z
+      }
+    };
+  }
+
 _doAction(action) {
   this._applyAction(action);
   this.undoStack.push(action);

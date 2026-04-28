@@ -8,7 +8,7 @@
 </head>
 <body>
   <div id="loading-overlay" class="overlay">
-    <div class="loading-panel">
+    <div class="loading-panel paper-ui">
       <h1>Loading World</h1>
       <div id="loading-label">Starting 0%</div>
       <div class="loading-progress-track">
@@ -19,12 +19,12 @@
 
   <div id="instructions-overlay" class="overlay intro-overlay">
     <div class="intro-content">
-      <div class="intro-story-panel">
+      <div class="intro-story-panel paper-ui">
         <h1 class="intro-title">Graffiti Game</h1>
         <p class="intro-lead">
           Draw some stuff. Be creative. The city is your canvas, every wall up for grabs.
         </p>
-        <div class="intro-player-style">
+        <div class="intro-player-style paper-ui-subpanel">
           <div class="intro-player-name-row">
             <label for="player-name-input">Name</label>
             <input id="player-name-input" type="text" maxlength="18" value="Writer" />
@@ -45,17 +45,17 @@
         </div>
         <p class="intro-footnote">Use the Controls panel in the top-left at any time if you need a quick reminder.</p>
       </div>
-      <button id="start-game-button" class="primary-button">Start Session</button>
+      <button id="start-game-button" class="primary-button paper-ui-button">Start Session</button>
     </div>
   </div>
 
   <div id="hud-root">
   
 
-    <div id="controls-block" class="hud-block controls-block">
+    <div id="controls-block" class="hud-block controls-block paper-ui">
       <div class="controls-header">
         <h2 class="controls-title">Controls</h2>
-        <button id="controls-toggle-button" class="controls-toggle-button" type="button" aria-expanded="true">
+        <button id="controls-toggle-button" class="controls-toggle-button paper-ui-button" type="button" aria-expanded="true">
           Hide
         </button>
       </div>
@@ -119,7 +119,7 @@
       <button id="chat-send-button" class="chat-send-button" type="button">Send</button>
     </div>
 
-    <div id="debug-panel" class="debug-panel">FPS 0 | Draw 0 | Triangles 0 | Memory n/a</div>
+    <div id="debug-panel" class="debug-panel">FPS 0.0</div>
   </div>
 
   <script>

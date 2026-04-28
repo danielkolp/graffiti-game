@@ -7,9 +7,11 @@ export class SyncSystem {
     this.apiBaseUrl = this._normalizeBaseUrl(options.apiBaseUrl);
 
     this.playerSendAccumulator = 0;
-    this.playerSendInterval = 0.05;
+    this.playerSendIntervalMoving = 1 / 30;
+    this.playerSendIntervalIdle = 0.1;
     this.profileHeartbeatAccumulator = 0;
     this.profileHeartbeatInterval = 1.25;
+    this.lastSentPlayerState = null;
     this.selfId = null;
 
     this._bindEvents();
@@ -37,6 +39,7 @@ export class SyncSystem {
         for (const player of state.players) {
           if (player.id !== this.selfId) {
             this.playerController.upsertRemotePlayer(player.id, player);
+            this.playerController.setRemoteDrawCursor(player.id, player.drawCursor);
           }
         }
       }
@@ -66,6 +69,12 @@ export class SyncSystem {
     }
 
     return trimmed.replace(/\/$/, '');
+  }
+
+  _buildLocalPlayerState() {
+    const state = this.playerController.getLocalNetworkState();
+    state.drawCursor = this.drawingSystem.getLocalDrawCursorState();
+    return state;
   }
 
   async _bootstrapLegacyFallback(rootError) {
@@ -122,17 +131,40 @@ export class SyncSystem {
       return;
     }
 
+    const state = this._buildLocalPlayerState();
+    const activeMovement = this._isMovementActive(state, this.lastSentPlayerState);
+    const sendInterval = activeMovement ? this.playerSendIntervalMoving : this.playerSendIntervalIdle;
+
     this.profileHeartbeatAccumulator += deltaSeconds;
     if (this.profileHeartbeatAccumulator >= this.profileHeartbeatInterval) {
-      this.profileHeartbeatAccumulator = 0;
-      this.socketManager.emit('player:update', this.playerController.getLocalNetworkState());
+      this.profileHeartbeatAccumulator %= this.profileHeartbeatInterval;
+      this.socketManager.emit('player:update', state);
+      this.lastSentPlayerState = state;
     }
 
     this.playerSendAccumulator += deltaSeconds;
-    if (this.playerSendAccumulator >= this.playerSendInterval) {
-      this.playerSendAccumulator = 0;
-      this.socketManager.emit('player:update', this.playerController.getLocalNetworkState());
+    if (this.playerSendAccumulator >= sendInterval) {
+      this.playerSendAccumulator %= sendInterval;
+      this.socketManager.emitVolatile('player:update', state);
+      this.lastSentPlayerState = state;
     }
+  }
+
+  _isMovementActive(next, previous) {
+    if (!next?.position || !previous?.position) {
+      return true;
+    }
+
+    const dx = Number(next.position.x) - Number(previous.position.x);
+    const dy = Number(next.position.y) - Number(previous.position.y);
+    const dz = Number(next.position.z) - Number(previous.position.z);
+    const positionDeltaSq = (dx * dx) + (dy * dy) + (dz * dz);
+    if (positionDeltaSq > 0.0004) {
+      return true;
+    }
+
+    const yawDelta = Math.abs((Number(next.rotationY) || 0) - (Number(previous.rotationY) || 0));
+    return yawDelta > 0.015;
   }
 
   _bindEvents() {
@@ -162,7 +194,7 @@ export class SyncSystem {
       this.selfId = id;
       this.uiManager.setConnectionStatus(true);
       this.playerController.setLocalPlayerId(id);
-      const profile = this.playerController.getLocalNetworkState();
+      const profile = this._buildLocalPlayerState();
       this.socketManager.emit('player:join', profile);
       this.socketManager.emit('player:update', profile);
       this._verifyServerFeatureSupport();
@@ -190,6 +222,7 @@ export class SyncSystem {
         for (const player of payload.players) {
           if (player.id !== this.selfId) {
             this.playerController.upsertRemotePlayer(player.id, player);
+            this.playerController.setRemoteDrawCursor(player.id, player.drawCursor);
           }
         }
       }
@@ -200,6 +233,7 @@ export class SyncSystem {
         return;
       }
       this.playerController.upsertRemotePlayer(payload.id, payload);
+      this.playerController.setRemoteDrawCursor(payload.id, payload.drawCursor);
       if (typeof payload.color === 'string') {
         this.playerController.setRemotePlayerColor(payload.id, payload.color);
       }

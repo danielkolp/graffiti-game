@@ -8,7 +8,44 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'DropShade';
+  src: url('assets/DropShade.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Shadows Into Light Local';
+  src: url('assets/ShadowsIntoLight-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
+  --paper-overlay-image: url('assets/papertexture.png');
+  /* Paper intensity controls (edit these first):
+     - `--paper-texture-alpha-*`: higher = stronger wrinkle texture.
+     - `--paper-tint-alpha-*`: higher = flatter/tan wash, lower = texture stands out more.
+     Typical range for both: 0.55 to 1.00. */
+  --paper-tint-alpha-main: 0.8;
+  --paper-tint-alpha-subpanel: 0.78;
+  --paper-tint-alpha-button: 0.8;
+  --paper-texture-alpha-main: 1;
+  --paper-texture-alpha-subpanel: 1;
+  --paper-texture-alpha-button: 1;
+  /* Direct overlay opacity (most visible control for wrinkle strength). */
+  --paper-overlay-opacity-main: 0.42;
+  --paper-overlay-opacity-subpanel: 0.38;
+  --paper-overlay-opacity-button: 0.32;
+  --paper-base: #dec8a8;
+  --paper-shadow: #b4946c;
+  --paper-highlight: #f3e7d2;
+  --paper-ink: #23170d;
+  --paper-ink-muted: rgba(42, 30, 20, 0.82);
+  --paper-border: rgba(88, 63, 39, 0.58);
   --hud-bg: rgba(10, 16, 24, 0.66);
   --hud-border: rgba(210, 232, 255, 0.2);
   --hud-text: #e8f3ff;
@@ -36,7 +73,7 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: 'Sora', 'Segoe UI Variable', sans-serif;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   background: radial-gradient(circle at 15% 20%, #4a6779 0%, #293b4d 40%, #1f2b38 100%);
 }
 
@@ -66,11 +103,11 @@ canvas {
 .loading-panel {
   width: min(560px, 92vw);
   padding: 34px;
-  border-radius: 18px;
-  border: 1px solid rgba(194, 227, 255, 0.22);
-  background: rgba(7, 12, 19, 0.74);
+  border-radius: 0;
+  border: 1px solid var(--debug-border);
+  background: var(--debug-bg);
   backdrop-filter: blur(8px);
-  color: #e2f2ff;
+  color: var(--debug-text);
 }
 
 .loading-panel h1 {
@@ -86,15 +123,16 @@ canvas {
 
 #loading-label {
   font-size: 0.95rem;
-  color: #b2ccde;
+  color: var(--debug-muted);
   margin-bottom: 14px;
 }
 
 .loading-progress-track {
   width: 100%;
   height: 11px;
-  border-radius: 999px;
-  background: rgba(160, 184, 211, 0.16);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--debug-border);
   overflow: hidden;
 }
 
@@ -102,7 +140,7 @@ canvas {
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #28c8ff, #8cf2ff);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), rgba(188, 205, 224, 0.92));
   transition: width 180ms ease;
 }
 
@@ -119,7 +157,7 @@ canvas {
 
 .intro-title {
   margin: 0;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'DropShade', 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: clamp(1.2rem, 2.1vw, 1.8rem);
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -133,7 +171,7 @@ canvas {
   color: var(--debug-text);
   padding: 18px;
   border-radius: 0;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
 }
 
 .intro-lead {
@@ -189,7 +227,7 @@ canvas {
   background: rgba(0, 0, 0, 0.4);
   color: var(--debug-text);
   padding: 8px 10px;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: 0.78rem;
 }
 
@@ -263,22 +301,24 @@ canvas {
 }
 
 .primary-button {
-  border: 0;
-  border-radius: 12px;
+  border: 1px solid var(--debug-border);
+  border-radius: 0;
   padding: 12px 24px;
   font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #042139;
-  background: linear-gradient(120deg, #79e4ff, #2ec7ff);
+  color: var(--debug-text);
+  background: var(--debug-bg);
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   cursor: pointer;
-  transition: transform 160ms ease, filter 160ms ease;
+  transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease;
 }
 
 .primary-button:hover {
-  transform: translateY(-2px);
-  filter: brightness(1.04);
+  transform: translateY(-1px);
+  background-color: var(--debug-button-hover);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
 #hud-root {
@@ -286,6 +326,11 @@ canvas {
   inset: 0;
   pointer-events: none;
   z-index: 20;
+}
+
+/* Keep gameplay HUD hidden while intro/start overlay is visible. */
+#instructions-overlay:not(.hidden) ~ #hud-root {
+  display: none;
 }
 
 
@@ -301,11 +346,160 @@ canvas {
   padding: 8px;
 }
 
+:is(
+  .draw-hud,
+  .draw-prompt,
+  .chat-hud,
+  .debug-panel,
+  .chat-send-button,
+  .tool-button,
+  .chat-input,
+  .rgb-input
+) {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03)),
+    var(--paper-overlay-image),
+    linear-gradient(var(--debug-bg), var(--debug-bg));
+  background-size: auto, 560px 560px, auto;
+  background-position: center, center, center;
+  background-blend-mode: soft-light, soft-light, normal;
+}
+
+:is(.hud-block, .hud-chip) {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03)),
+    var(--paper-overlay-image),
+    linear-gradient(var(--hud-bg), var(--hud-bg));
+  background-size: auto, 560px 560px, auto;
+  background-position: center, center, center;
+  background-blend-mode: soft-light, soft-light, normal;
+}
+
 .controls-block {
   pointer-events: auto;
   width: min(320px, 38vw);
   min-width: 240px;
   padding: 10px;
+}
+
+/* Explicit crumpled-paper treatment (used by loading, intro and controls). */
+.paper-ui,
+.paper-ui-subpanel,
+.paper-ui-button {
+  --debug-bg: #e6cfad;
+  --hud-bg: #e6cfad;
+  --debug-text: var(--paper-ink);
+  --debug-muted: var(--paper-ink-muted);
+  --hud-text: var(--paper-ink);
+  --hud-muted: var(--paper-ink-muted);
+  --debug-border: var(--paper-border);
+  --hud-border: var(--paper-border);
+  color: var(--paper-ink);
+  border-color: var(--paper-border);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background-color: #e6cfad;
+  background-image:
+    linear-gradient(165deg, rgba(250, 240, 220, var(--paper-tint-alpha-main)), rgba(229, 205, 169, calc(var(--paper-tint-alpha-main) - 0.02)) 52%, rgba(200, 164, 117, calc(var(--paper-tint-alpha-main) - 0.04))),
+    radial-gradient(circle at 18% 16%, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 62%);
+  background-size: auto, auto;
+  background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
+  background-blend-mode: normal, soft-light;
+}
+
+.paper-ui-subpanel {
+  background-color: #ecd8b6;
+  background-image:
+    linear-gradient(165deg, rgba(252, 244, 228, var(--paper-tint-alpha-subpanel)), rgba(233, 212, 180, calc(var(--paper-tint-alpha-subpanel) - 0.02)) 55%, rgba(206, 175, 131, calc(var(--paper-tint-alpha-subpanel) - 0.04))),
+    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0) 62%);
+  background-size: auto, auto;
+  background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
+  background-blend-mode: normal, soft-light;
+}
+
+.paper-ui-button {
+  border-radius: 0;
+  background-color: #e2c49a;
+  background-image:
+    linear-gradient(170deg, rgba(248, 236, 214, var(--paper-tint-alpha-button)), rgba(225, 197, 157, calc(var(--paper-tint-alpha-button) - 0.02)) 60%, rgba(190, 150, 104, calc(var(--paper-tint-alpha-button) - 0.04)));
+  background-size: auto;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-blend-mode: normal;
+}
+
+.paper-ui::before,
+.paper-ui-subpanel::before,
+.paper-ui-button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--paper-overlay-image), var(--paper-overlay-image);
+  background-size: 220px 220px, 320px 320px;
+  background-position: center, 110px 110px;
+  background-repeat: repeat, repeat;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.paper-ui::before {
+  opacity: var(--paper-overlay-opacity-main);
+}
+
+.paper-ui-subpanel::before {
+  opacity: var(--paper-overlay-opacity-subpanel);
+}
+
+.paper-ui-button::before {
+  opacity: var(--paper-overlay-opacity-button);
+}
+
+.paper-ui > *,
+.paper-ui-subpanel > *,
+.paper-ui-button > * {
+  position: relative;
+  z-index: 1;
+}
+
+.loading-panel h1,
+.intro-title,
+.controls-title {
+  color: var(--paper-ink);
+}
+
+.intro-lead,
+.intro-footnote,
+.intro-player-style-label,
+.intro-player-name-row label,
+.intro-player-color-row label {
+  color: var(--paper-ink-muted);
+}
+
+.intro-player-style #player-name-input {
+  border: 1px solid rgba(90, 66, 43, 0.56);
+  background-image:
+    linear-gradient(rgba(255, 250, 240, 0.64), rgba(237, 218, 183, 0.72)),
+    var(--paper-overlay-image);
+  background-size: auto, 520px 520px;
+  background-position: center, center;
+  background-blend-mode: normal, multiply;
+  color: var(--paper-ink);
+}
+
+.controls-block .controls-row kbd {
+  border-color: rgba(71, 51, 31, 0.86);
+  background: rgba(20, 14, 10, 0.9);
+  color: #f2e5d1;
+}
+
+.controls-toggle-button:hover,
+.primary-button:hover {
+  background-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(78, 56, 35, 0.88);
 }
 
 .controls-header {
@@ -318,7 +512,7 @@ canvas {
 .controls-title {
   margin: 0;
   color: var(--hud-text);
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: 0.98rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -326,17 +520,18 @@ canvas {
 
 .controls-toggle-button {
   border: 1px solid var(--debug-border);
-  background: var(--debug-bg);
+  background-color: transparent;
   color: var(--debug-text);
   padding: 5px 10px;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: 0.72rem;
   text-transform: uppercase;
   cursor: pointer;
 }
 
 .controls-toggle-button:hover {
-  background: var(--debug-button-hover);
+  background-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(78, 56, 35, 0.88);
 }
 
 .controls-content {
@@ -351,7 +546,7 @@ canvas {
   align-items: center;
   gap: 8px;
   color: var(--hud-text);
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: 0.73rem;
   line-height: 1.25;
 }
@@ -367,12 +562,15 @@ canvas {
   font-size: 0.7rem;
 }
 
-.controls-collapsed {
-  width: auto;
+.controls-block.controls-collapsed {
+  display: inline-block;
+  width: max-content;
   min-width: 0;
+  max-width: max-content;
+  padding-right: 8px;
 }
 
-.controls-collapsed .controls-content {
+.controls-block.controls-collapsed .controls-content {
   display: none;
 }
 
@@ -380,24 +578,32 @@ canvas {
   position: absolute;
   top: 14px;
   right: 14px;
-  border-radius: 999px;
-  padding: 7px 14px;
+  border-radius: 2px;
+  padding: 7px 12px;
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.03em;
-  border: 1px solid var(--hud-border);
-  background: var(--hud-bg);
-  color: var(--hud-text);
+  border: 1px solid rgba(78, 56, 35, 0.88);
+  background-color: #e2c49a;
+  background-image:
+    linear-gradient(170deg, rgba(248, 236, 214, 0.82), rgba(225, 197, 157, 0.8) 60%, rgba(190, 150, 104, 0.78)),
+    var(--paper-overlay-image);
+  background-size: auto, 220px 220px;
+  background-position: center, center;
+  background-repeat: no-repeat, repeat;
+  background-blend-mode: normal, multiply;
+  color: var(--paper-ink);
+  text-transform: uppercase;
 }
 
 .hud-chip.connected {
-  color: #d7ffe3;
-  border-color: rgba(116, 255, 172, 0.3);
+  color: var(--paper-ink);
+  border-color: rgba(78, 56, 35, 0.88);
 }
 
 .hud-chip.disconnected {
-  color: #ffd5d5;
-  border-color: rgba(255, 134, 134, 0.35);
+  color: #6c2f2f;
+  border-color: rgba(128, 62, 62, 0.72);
 }
 
 .draw-prompt {
@@ -415,7 +621,7 @@ canvas {
   box-shadow: none;
   transition: opacity 180ms ease, transform 180ms ease;
   text-transform: uppercase;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   letter-spacing: 0.04em;
 }
 
@@ -452,7 +658,7 @@ canvas {
   gap: 8px;
   margin-bottom: 10px;
   font-size: 0.75rem;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
 }
 
 .draw-row:last-child {
@@ -477,7 +683,7 @@ canvas {
 }
 
 .stroke-color-hex {
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: 0.72rem;
   letter-spacing: 0.03em;
   color: var(--debug-text);
@@ -545,7 +751,7 @@ canvas {
   background: var(--debug-bg);
   color: var(--debug-text);
   text-align: center;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
 }
 
 .undo-button {
@@ -568,18 +774,18 @@ canvas {
   font-size: 0.72rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   cursor: pointer;
   box-shadow: none;
 }
 
 .tool-button:hover {
-  background: var(--debug-button-hover);
+  background-color: var(--debug-button-hover);
 }
 
 .tool-button.active {
   border-color: var(--debug-active-bg);
-  background: var(--debug-active-bg);
+  background-color: var(--debug-active-bg);
   color: var(--debug-active-text);
   box-shadow: none;
 }
@@ -635,16 +841,21 @@ canvas {
 
 .debug-panel {
   position: absolute;
-  left: 50%;
-  top: 12px;
-  transform: translateX(-50%);
-  padding: 7px 12px;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
-  font-size: 0.75rem;
-  color: var(--debug-text);
-  border: 1px solid var(--debug-border);
-  background: var(--debug-bg);
+  right: 8px;
+  bottom: 8px;
+  top: auto;
+  transform: none;
+  padding: 5px 9px;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
+  font-size: 0.7rem;
+  color: var(--paper-ink);
+  border: 1px solid rgba(78, 56, 35, 0.88);
+  background-color: #e5cca8;
+  background-image: linear-gradient(165deg, rgba(250, 240, 220, 0.82), rgba(229, 205, 169, 0.8) 52%, rgba(200, 164, 117, 0.78));
   text-transform: uppercase;
+  pointer-events: none;
+  isolation: isolate;
+  overflow: hidden;
 }
 
 .chat-hud {
@@ -655,38 +866,83 @@ canvas {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
-  border: 1px solid var(--debug-border);
-  background: var(--debug-bg);
+  border: 1px solid rgba(78, 56, 35, 0.88);
+  background-color: #e6cfad;
+  background-image: linear-gradient(165deg, rgba(250, 240, 220, 0.82), rgba(229, 205, 169, 0.8) 52%, rgba(200, 164, 117, 0.78));
   padding: 8px;
   pointer-events: auto;
+  isolation: isolate;
+  overflow: hidden;
 }
 
 .chat-input {
-  border: 1px solid var(--debug-border);
-  background: rgba(0, 0, 0, 0.4);
-  color: var(--debug-text);
+  border: 1px solid rgba(92, 68, 44, 0.86);
+  background-color: #efddc2;
+  background-image:
+    linear-gradient(rgba(255, 248, 236, 0.78), rgba(237, 218, 183, 0.8)),
+    var(--paper-overlay-image);
+  background-size: auto, 300px 300px;
+  background-repeat: no-repeat, repeat;
+  background-blend-mode: normal, multiply;
+  color: var(--paper-ink);
   padding: 8px 10px;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: 0.76rem;
 }
 
 .chat-input::placeholder {
-  color: var(--debug-muted);
+  color: rgba(72, 52, 32, 0.8);
 }
 
 .chat-send-button {
-  border: 1px solid var(--debug-border);
-  background: var(--debug-bg);
-  color: var(--debug-text);
+  border: 1px solid rgba(78, 56, 35, 0.88);
+  background-color: #e2c49a;
+  background-image:
+    linear-gradient(170deg, rgba(248, 236, 214, 0.82), rgba(225, 197, 157, 0.8) 60%, rgba(190, 150, 104, 0.78)),
+    var(--paper-overlay-image);
+  background-size: auto, 220px 220px;
+  background-position: center, center;
+  background-repeat: no-repeat, repeat;
+  background-blend-mode: normal, multiply;
+  color: var(--paper-ink);
   padding: 0 14px;
-  font-family: 'Consolas Local', Consolas, 'Courier New', monospace;
+  font-family: 'Shadows Into Light Local', 'Sora', 'Segoe UI Variable', sans-serif;
   font-size: 0.75rem;
   text-transform: uppercase;
   cursor: pointer;
 }
 
 .chat-send-button:hover {
-  background: var(--debug-button-hover);
+  background-color: #ecd3ac;
+  border-color: rgba(96, 70, 42, 0.92);
+}
+
+.chat-hud::before,
+.debug-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--paper-overlay-image), var(--paper-overlay-image);
+  background-size: 220px 220px, 320px 320px;
+  background-position: center, 110px 110px;
+  background-repeat: repeat, repeat;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.chat-hud::before {
+  opacity: 0.34;
+}
+
+.debug-panel::before {
+  opacity: 0.3;
+}
+
+.chat-hud > *,
+.debug-panel > * {
+  position: relative;
+  z-index: 1;
 }
 
 .debug-panel.expanded {
@@ -709,9 +965,10 @@ canvas {
   }
 
   .debug-panel {
-    left: auto;
-    right: 12px;
-    top: 52px;
+    left: 8px;
+    bottom: 8px;
+    top: auto;
+    right: auto;
     transform: none;
   }
 }

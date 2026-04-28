@@ -48049,7 +48049,16 @@
   var CHAT_BUBBLE_DURATION_MS = 5e3;
   var CHAT_BUBBLE_MAX_CHARS = 96;
   var PLAYER_NAME_MAX_CHARS = 18;
+  var REMOTE_PLAYER_STALE_TIMEOUT_MS = 12e4;
+  var REMOTE_PREDICTION_MAX_SECONDS = 0.12;
+  var REMOTE_PREDICTION_MAX_DISTANCE = 1.2;
+  var REMOTE_SNAP_DISTANCE = 8;
+  var DRAW_CURSOR_SPRITE_BASE_WIDTH = 5.6;
+  var DRAW_CURSOR_SPRITE_BASE_HEIGHT = 1.5;
+  var DRAW_STATUS_SPRITE_BASE_WIDTH = 4.8;
+  var DRAW_STATUS_SPRITE_BASE_HEIGHT = 1;
   var NAME_TAG_HEAD_GAP = 1.2;
+  var DRAW_STATUS_TAG_GAP = 0.14;
   var CHAT_BUBBLE_TAG_GAP = 0.15;
   var LABEL_HEAD_CLEARANCE_FACTOR = 0.16;
   var LABEL_HEAD_CLEARANCE_MIN = 0.35;
@@ -48106,6 +48115,12 @@
     const out = base.clone().lerp(new Color("#ffffff"), clamp3(mix, 0, 1));
     return `#${out.getHexString()}`;
   }
+  function getContrastingTextColor(hexColor) {
+    const safe = normalizeHexColor(hexColor);
+    const color = new Color(safe);
+    const luminance = color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722;
+    return luminance > 0.62 ? "#101014" : "#ffffff";
+  }
   function sanitizePlayerName(value, fallback = DEFAULT_PLAYER_NAME) {
     const collapsed = String(value || "").replace(/\s+/g, " ").trim().slice(0, PLAYER_NAME_MAX_CHARS);
     return collapsed || fallback;
@@ -48154,6 +48169,7 @@
         })
       );
       mesh.castShadow = true;
+      mesh.frustumCulled = false;
       mesh.position.y = 1;
       root.add(mesh);
       return root;
@@ -48216,6 +48232,8 @@
       this.remoteClipMap = {};
       this.remoteTemplateReady = false;
       this.tempRemotePrevPos = new Vector3();
+      this.tempRemotePredictedPos = new Vector3();
+      this.tempRemotePredictionOffset = new Vector3();
       this.localPlayerColor = DEFAULT_PLAYER_COLOR;
       this.localPlayerName = DEFAULT_PLAYER_NAME;
       this.localPlayerId = null;
@@ -48225,6 +48243,7 @@
       this.pendingRemoteTyping = /* @__PURE__ */ new Map();
       this.pendingRemoteColors = /* @__PURE__ */ new Map();
       this.pendingRemoteNames = /* @__PURE__ */ new Map();
+      this.pendingRemoteDrawCursors = /* @__PURE__ */ new Map();
     }
     getLocalPlayer() {
       return this.localPlayer;
@@ -48299,6 +48318,16 @@
       }
       this._setRemotePlayerColor(remote, safe);
     }
+    setRemoteDrawCursor(playerId, drawCursor) {
+      const remote = this.remotePlayers.get(playerId);
+      const safe = this._sanitizeRemoteDrawCursor(drawCursor);
+      if (!remote) {
+        this.pendingRemoteDrawCursors.set(playerId, safe);
+        return;
+      }
+      remote.drawCursor = safe;
+      this._updateRemoteDrawCursor(remote);
+    }
     async loadLocalPlayer() {
       try {
         const gltf = await this._loadPlayerModelWithCandidates();
@@ -48312,7 +48341,7 @@
           }
           node.castShadow = true;
           node.receiveShadow = false;
-          node.frustumCulled = true;
+          node.frustumCulled = false;
           if (!node.material) {
             return;
           }
@@ -48392,6 +48421,7 @@
       this._updateLabelAnchors();
     }
     upsertRemotePlayer(playerId, snapshot) {
+      const now3 = Date.now();
       let remote = this.remotePlayers.get(playerId);
       if (!remote) {
         remote = this._createRemotePlayerInstance(playerId, snapshot);
@@ -48410,15 +48440,35 @@
         if (typeof snapshot?.name === "string") {
           remote.name = sanitizePlayerName(snapshot.name);
         }
+        remote.drawCursor = this._sanitizeRemoteDrawCursor(snapshot?.drawCursor);
         remote.lastPosition.copy(remote.object3D.position);
-        remote.lastUpdateAt = Date.now();
+        remote.lastUpdateAt = now3;
         remote.estimatedSpeed = 0;
         this.scene.add(remote.object3D);
         this.remotePlayers.set(playerId, remote);
         this._applyPendingRemoteUi(playerId, remote);
       }
       if (snapshot.position) {
+        const prevX = remote.targetPosition.x;
+        const prevY = remote.targetPosition.y;
+        const prevZ = remote.targetPosition.z;
         remote.targetPosition.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+        if (remote.hasNetworkSnapshot) {
+          const dt = Math.max(0.016, Math.min((now3 - (remote.lastSnapshotAt || now3)) / 1e3, 0.25));
+          remote.targetVelocity.set(
+            (remote.targetPosition.x - prevX) / dt,
+            (remote.targetPosition.y - prevY) / dt,
+            (remote.targetPosition.z - prevZ) / dt
+          );
+          const speed = remote.targetVelocity.length();
+          if (speed > 30) {
+            remote.targetVelocity.multiplyScalar(30 / speed);
+          }
+        } else {
+          remote.targetVelocity.set(0, 0, 0);
+          remote.hasNetworkSnapshot = true;
+        }
+        remote.lastSnapshotAt = now3;
       }
       if (typeof snapshot.rotationY === "number") {
         remote.targetRotationY = snapshot.rotationY;
@@ -48430,7 +48480,10 @@
         remote.name = sanitizePlayerName(snapshot.name);
         this._setNameTagText(remote.nameTag, remote.name);
       }
-      remote.lastSeen = Date.now();
+      remote.drawCursor = this._sanitizeRemoteDrawCursor(snapshot.drawCursor);
+      this._updateRemoteDrawCursor(remote);
+      remote.lastSeen = now3;
+      remote.lastUpdateAt = now3;
     }
     removeRemotePlayer(playerId) {
       const remote = this.remotePlayers.get(playerId);
@@ -48440,6 +48493,12 @@
       this.scene.remove(remote.object3D);
       if (remote.usesFallback) {
         this.remotePool.release(remote.object3D);
+      }
+      if (remote.cursorIndicator?.sprite) {
+        this.scene.remove(remote.cursorIndicator.sprite);
+      }
+      if (remote.drawStatusIndicator?.sprite) {
+        this.scene.remove(remote.drawStatusIndicator.sprite);
       }
       this.remotePlayers.delete(playerId);
     }
@@ -48469,19 +48528,47 @@
         }
         this.pendingRemoteChat.delete(playerId);
       }
+      if (this.pendingRemoteDrawCursors.has(playerId)) {
+        remote.drawCursor = this.pendingRemoteDrawCursors.get(playerId);
+        this._updateRemoteDrawCursor(remote);
+        this.pendingRemoteDrawCursors.delete(playerId);
+      }
     }
     _updateRemotePlayers(deltaSeconds) {
       const now3 = Date.now();
       for (const [playerId, remote] of this.remotePlayers.entries()) {
+        const sinceSnapshot = Math.max(
+          0,
+          Math.min((now3 - (remote.lastSnapshotAt || now3)) / 1e3, REMOTE_PREDICTION_MAX_SECONDS)
+        );
+        this.tempRemotePredictedPos.copy(remote.targetPosition);
+        if (remote.targetVelocity) {
+          this.tempRemotePredictedPos.addScaledVector(remote.targetVelocity, sinceSnapshot);
+        }
+        this.tempRemotePredictionOffset.copy(this.tempRemotePredictedPos).sub(remote.targetPosition);
+        const predictionDistance = this.tempRemotePredictionOffset.length();
+        if (predictionDistance > REMOTE_PREDICTION_MAX_DISTANCE) {
+          this.tempRemotePredictionOffset.setLength(REMOTE_PREDICTION_MAX_DISTANCE);
+          this.tempRemotePredictedPos.copy(remote.targetPosition).add(this.tempRemotePredictionOffset);
+        }
         this.tempRemotePrevPos.copy(remote.object3D.position);
-        remote.object3D.position.lerp(remote.targetPosition, 1 - Math.exp(-12 * deltaSeconds));
-        remote.object3D.rotation.y = damp3(remote.object3D.rotation.y, remote.targetRotationY, 12, deltaSeconds);
+        const predictionError = remote.object3D.position.distanceTo(this.tempRemotePredictedPos);
+        if (predictionError > REMOTE_SNAP_DISTANCE) {
+          remote.object3D.position.copy(this.tempRemotePredictedPos);
+        } else {
+          const followLambda = predictionError > 1.5 ? 22 : predictionError > 0.6 ? 16 : 12;
+          remote.object3D.position.lerp(
+            this.tempRemotePredictedPos,
+            1 - Math.exp(-followLambda * deltaSeconds)
+          );
+        }
+        remote.object3D.rotation.y = damp3(remote.object3D.rotation.y, remote.targetRotationY, 14, deltaSeconds);
         const movedDistance = remote.object3D.position.distanceTo(this.tempRemotePrevPos);
         const frameSpeed = movedDistance / Math.max(1e-4, deltaSeconds);
         remote.estimatedSpeed = damp3(remote.estimatedSpeed || 0, frameSpeed, 8, deltaSeconds);
         this._updateRemoteAnimation(remote, deltaSeconds);
         this._updateChatBubble(remote.chatBubble, now3);
-        if (now3 - remote.lastSeen > 15e3) {
+        if (now3 - remote.lastSeen > REMOTE_PLAYER_STALE_TIMEOUT_MS) {
           this.removeRemotePlayer(playerId);
         }
       }
@@ -48530,8 +48617,11 @@
         id: playerId,
         object3D,
         targetPosition: new Vector3(),
+        targetVelocity: new Vector3(),
         targetRotationY: 0,
         lastSeen: Date.now(),
+        lastSnapshotAt: Date.now(),
+        hasNetworkSnapshot: false,
         mixer: null,
         actions: {},
         currentState: "idle",
@@ -48542,12 +48632,23 @@
         name: desiredName,
         chatBubble: this._attachChatBubble(object3D),
         nameTag: this._attachNameTag(object3D),
+        drawStatusIndicator: this._createDrawingStatusIndicator(),
+        cursorIndicator: this._createDrawCursorIndicator(),
         labelAnchorY: this._estimateLabelAnchorY(object3D),
         usesFallback
       };
       object3D.userData.labelAnchorY = remote.labelAnchorY;
       this._resetChatBubble(remote.chatBubble);
       this._setNameTagText(remote.nameTag, remote.name);
+      if (remote.drawStatusIndicator?.sprite) {
+        this._drawDrawingStatusIndicator(remote.drawStatusIndicator, remote.color);
+        this.scene.add(remote.drawStatusIndicator.sprite);
+      }
+      if (remote.cursorIndicator?.sprite) {
+        this._drawCursorIndicator(remote.cursorIndicator, remote.name, remote.color);
+        this.scene.add(remote.cursorIndicator.sprite);
+        this._updateRemoteDrawCursor(remote);
+      }
       if (!usesFallback) {
         this._initRemoteAnimationRig(remote);
         this._setRemotePlayerColor(remote, desiredColor);
@@ -48602,6 +48703,165 @@
       if (visual) {
         this._applyColorToVisual(visual, safe);
       }
+      if (remote.cursorIndicator) {
+        this._drawCursorIndicator(remote.cursorIndicator, remote.name, safe);
+      }
+      if (remote.drawStatusIndicator) {
+        this._drawDrawingStatusIndicator(remote.drawStatusIndicator, safe);
+      }
+    }
+    _sanitizeRemoteDrawCursor(drawCursor) {
+      if (!drawCursor || typeof drawCursor !== "object" || drawCursor.active !== true) {
+        return null;
+      }
+      const position = drawCursor.position || {};
+      const normal = drawCursor.normal || {};
+      const x = Number(position.x);
+      const y = Number(position.y);
+      const z = Number(position.z);
+      const nx = Number(normal.x);
+      const ny = Number(normal.y);
+      const nz = Number(normal.z);
+      if (![x, y, z, nx, ny, nz].every(Number.isFinite)) {
+        return null;
+      }
+      return {
+        active: true,
+        position: { x, y, z },
+        normal: { x: nx, y: ny, z: nz }
+      };
+    }
+    _createDrawCursorIndicator() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 128;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return null;
+      }
+      const texture = new CanvasTexture(canvas);
+      texture.colorSpace = SRGBColorSpace;
+      texture.minFilter = NearestFilter;
+      texture.magFilter = NearestFilter;
+      const material = new SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false
+      });
+      const sprite = new Sprite(material);
+      sprite.layers.set(UI_TEXT_LAYER);
+      sprite.visible = false;
+      sprite.renderOrder = 2950;
+      return {
+        canvas,
+        ctx,
+        texture,
+        sprite,
+        name: DEFAULT_PLAYER_NAME,
+        color: DEFAULT_PLAYER_COLOR
+      };
+    }
+    _drawCursorIndicator(indicator, name, colorHex) {
+      if (!indicator?.ctx) {
+        return;
+      }
+      const safeName = sanitizePlayerName(name);
+      const safeColor = normalizeHexColor(colorHex);
+      const accentColor = lightenHexColor(safeColor, 0.25);
+      const textColor = getContrastingTextColor(safeColor);
+      indicator.name = safeName;
+      indicator.color = safeColor;
+      const { ctx, canvas, texture } = indicator;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const pad = 20;
+      const barWidth = 18;
+      ctx.font = '700 30px Consolas, "Courier New", monospace';
+      const textWidth = ctx.measureText(safeName).width;
+      const bubbleWidth = clamp3(textWidth + 92, 180, canvas.width - 18);
+      const bubbleHeight = 72;
+      const bubbleX = (canvas.width - bubbleWidth) * 0.5;
+      const bubbleY = 18;
+      const bubbleRadius = 20;
+      const tailWidth = 40;
+      const tailTipY = canvas.height - 10;
+      const innerX = bubbleX + pad;
+      ctx.fillStyle = "rgba(8, 8, 12, 0.92)";
+      ctx.strokeStyle = safeColor;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(bubbleX + bubbleRadius, bubbleY);
+      ctx.lineTo(bubbleX + bubbleWidth - bubbleRadius, bubbleY);
+      ctx.quadraticCurveTo(bubbleX + bubbleWidth, bubbleY, bubbleX + bubbleWidth, bubbleY + bubbleRadius);
+      ctx.lineTo(bubbleX + bubbleWidth, bubbleY + bubbleHeight - bubbleRadius);
+      ctx.quadraticCurveTo(
+        bubbleX + bubbleWidth,
+        bubbleY + bubbleHeight,
+        bubbleX + bubbleWidth - bubbleRadius,
+        bubbleY + bubbleHeight
+      );
+      ctx.lineTo(canvas.width * 0.5 + tailWidth * 0.5, bubbleY + bubbleHeight);
+      ctx.lineTo(canvas.width * 0.5, tailTipY);
+      ctx.lineTo(canvas.width * 0.5 - tailWidth * 0.5, bubbleY + bubbleHeight);
+      ctx.lineTo(bubbleX + bubbleRadius, bubbleY + bubbleHeight);
+      ctx.quadraticCurveTo(bubbleX, bubbleY + bubbleHeight, bubbleX, bubbleY + bubbleRadius);
+      ctx.lineTo(bubbleX, bubbleY + bubbleRadius);
+      ctx.quadraticCurveTo(bubbleX, bubbleY, bubbleX + bubbleRadius, bubbleY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = safeColor;
+      ctx.fillRect(innerX, bubbleY + 12, barWidth, bubbleHeight - 24);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.fillRect(innerX + barWidth + 8, bubbleY + 12, 4, bubbleHeight - 24);
+      ctx.fillStyle = textColor;
+      ctx.font = '700 30px Consolas, "Courier New", monospace';
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(safeName, innerX + barWidth + 22, bubbleY + bubbleHeight * 0.5 + 1);
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bubbleX + 2, bubbleY + 2, bubbleWidth - 4, bubbleHeight - 4);
+      texture.needsUpdate = true;
+    }
+    _updateRemoteDrawCursor(remote) {
+      if (!remote) {
+        return;
+      }
+      if (!remote.cursorIndicator) {
+        const indicator2 = this._createDrawCursorIndicator();
+        if (!indicator2) {
+          return;
+        }
+        remote.cursorIndicator = indicator2;
+        this._drawCursorIndicator(indicator2, remote.name, remote.color);
+        this.scene.add(indicator2.sprite);
+      }
+      const indicator = remote.cursorIndicator;
+      if (!indicator?.sprite) {
+        return;
+      }
+      if (!remote.drawCursor) {
+        indicator.sprite.visible = false;
+        this._updateRemoteDrawingStatus(remote);
+        return;
+      }
+      const cursor = remote.drawCursor;
+      const position = cursor.position || null;
+      const normal = cursor.normal || null;
+      if (!position || !normal) {
+        indicator.sprite.visible = false;
+        return;
+      }
+      this._drawCursorIndicator(indicator, remote.name, remote.color);
+      indicator.sprite.scale.set(DRAW_CURSOR_SPRITE_BASE_WIDTH, DRAW_CURSOR_SPRITE_BASE_HEIGHT, 1);
+      indicator.sprite.position.set(
+        position.x + normal.x * 0.08,
+        position.y + normal.y * 0.08,
+        position.z + normal.z * 0.08
+      );
+      indicator.sprite.visible = true;
+      this._updateRemoteDrawingStatus(remote);
     }
     _estimateLabelAnchorY(ownerObject3D) {
       if (!ownerObject3D) {
@@ -48688,8 +48948,13 @@
         this.remotePool.release(remote.object3D);
         const upgraded = this._createRemotePlayerInstance(playerId, snapshot);
         upgraded.targetPosition.copy(remote.targetPosition);
+        if (remote.targetVelocity) {
+          upgraded.targetVelocity.copy(remote.targetVelocity);
+        }
         upgraded.targetRotationY = remote.targetRotationY;
         upgraded.lastSeen = remote.lastSeen;
+        upgraded.lastSnapshotAt = remote.lastSnapshotAt || Date.now();
+        upgraded.hasNetworkSnapshot = remote.hasNetworkSnapshot === true;
         upgraded.estimatedSpeed = remote.estimatedSpeed || 0;
         if (remote.chatBubble) {
           upgraded.chatBubble.message = remote.chatBubble.message || "";
@@ -49380,6 +49645,95 @@
       );
       texture.needsUpdate = true;
     }
+    _createDrawingStatusIndicator() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 420;
+      canvas.height = 88;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return null;
+      }
+      const texture = new CanvasTexture(canvas);
+      texture.colorSpace = SRGBColorSpace;
+      texture.minFilter = NearestFilter;
+      texture.magFilter = NearestFilter;
+      const material = new SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false
+      });
+      const sprite = new Sprite(material);
+      sprite.layers.set(UI_TEXT_LAYER);
+      sprite.visible = false;
+      sprite.renderOrder = 2925;
+      return {
+        canvas,
+        ctx,
+        texture,
+        sprite
+      };
+    }
+    _drawDrawingStatusIndicator(indicator, colorHex) {
+      if (!indicator?.ctx) {
+        return;
+      }
+      const safeColor = normalizeHexColor(colorHex);
+      const textColor = getContrastingTextColor(safeColor);
+      const accentColor = lightenHexColor(safeColor, 0.35);
+      const { ctx, canvas, texture } = indicator;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const padX = 18;
+      const padY = 14;
+      const text = "drawing...";
+      ctx.font = '700 28px Consolas, "Courier New", monospace';
+      const textWidth = ctx.measureText(text).width;
+      const bubbleWidth = clamp3(textWidth + 72, 150, canvas.width - 16);
+      const bubbleHeight = 56;
+      const bubbleX = (canvas.width - bubbleWidth) * 0.5;
+      const bubbleY = 12;
+      const radius = 18;
+      ctx.fillStyle = "rgba(8, 8, 12, 0.90)";
+      ctx.strokeStyle = safeColor;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(bubbleX + radius, bubbleY);
+      ctx.lineTo(bubbleX + bubbleWidth - radius, bubbleY);
+      ctx.quadraticCurveTo(bubbleX + bubbleWidth, bubbleY, bubbleX + bubbleWidth, bubbleY + radius);
+      ctx.lineTo(bubbleX + bubbleWidth, bubbleY + bubbleHeight - radius);
+      ctx.quadraticCurveTo(bubbleX + bubbleWidth, bubbleY + bubbleHeight, bubbleX + bubbleWidth - radius, bubbleY + bubbleHeight);
+      ctx.lineTo(bubbleX + radius, bubbleY + bubbleHeight);
+      ctx.quadraticCurveTo(bubbleX, bubbleY + bubbleHeight, bubbleX, bubbleY + bubbleHeight - radius);
+      ctx.lineTo(bubbleX, bubbleY + radius);
+      ctx.quadraticCurveTo(bubbleX, bubbleY, bubbleX + radius, bubbleY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = safeColor;
+      ctx.fillRect(bubbleX + padX, bubbleY + padY, 12, bubbleHeight - padY * 2);
+      ctx.fillStyle = textColor;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, bubbleX + padX + 22, bubbleY + bubbleHeight * 0.52);
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bubbleX + 2, bubbleY + 2, bubbleWidth - 4, bubbleHeight - 4);
+      texture.needsUpdate = true;
+    }
+    _updateRemoteDrawingStatus(remote) {
+      if (!remote?.drawStatusIndicator?.sprite) {
+        return;
+      }
+      const indicator = remote.drawStatusIndicator;
+      const active = remote.drawCursor?.active === true;
+      if (!active) {
+        indicator.sprite.visible = false;
+        return;
+      }
+      this._drawDrawingStatusIndicator(indicator, remote.color);
+      indicator.sprite.scale.set(DRAW_STATUS_SPRITE_BASE_WIDTH, DRAW_STATUS_SPRITE_BASE_HEIGHT, 1);
+      indicator.sprite.visible = true;
+    }
     _setChatBubbleMessage(bubble, message, durationMs) {
       if (!bubble) {
         return;
@@ -49449,6 +49803,10 @@
         const nameTagY = anchor + tagHalfY + NAME_TAG_HEAD_GAP;
         if (nameTag?.sprite) {
           nameTag.sprite.position.y = nameTagY;
+        }
+        if (remote?.drawStatusIndicator?.sprite) {
+          const statusHalfY = (remote.drawStatusIndicator.sprite.scale.y || DRAW_STATUS_SPRITE_BASE_HEIGHT) * 0.5;
+          remote.drawStatusIndicator.sprite.position.y = nameTagY + tagHalfY + statusHalfY + DRAW_STATUS_TAG_GAP;
         }
         if (chatBubble?.sprite) {
           const bubbleHalfY = (chatBubble.sprite.scale.y || 1.6) * 0.5;
@@ -50690,6 +51048,8 @@
       this.tempPlane = new Plane();
       this.tempIntersectPoint = new Vector3();
       this.tempWorldPoint = new Vector3();
+      this.tempCursorWorldPoint = new Vector3();
+      this.tempCursorWorldNormal = new Vector3();
       this.tempVec = new Vector3();
       this.tempBasisMatrix = new Matrix4();
       this.probeRaycaster = new Raycaster();
@@ -50791,6 +51151,26 @@
     }
     isDrawModeActive() {
       return this.drawMode;
+    }
+    getLocalDrawCursorState() {
+      if (!this.drawMode || !this.activePatch || !this.activePreviewPoint) {
+        return null;
+      }
+      this.tempCursorWorldPoint.copy(this.activePatch.center).addScaledVector(this.activePatch.tangent, this.activePreviewPoint.x).addScaledVector(this.activePatch.bitangent, this.activePreviewPoint.y).addScaledVector(this.activePatch.normal, this.surfaceOffset);
+      this.tempCursorWorldNormal.copy(this.activePatch.normal).normalize();
+      return {
+        active: true,
+        position: {
+          x: this.tempCursorWorldPoint.x,
+          y: this.tempCursorWorldPoint.y,
+          z: this.tempCursorWorldPoint.z
+        },
+        normal: {
+          x: this.tempCursorWorldNormal.x,
+          y: this.tempCursorWorldNormal.y,
+          z: this.tempCursorWorldNormal.z
+        }
+      };
     }
     _doAction(action) {
       this._applyAction(action);
@@ -52087,6 +52467,16 @@
       }
       this.socket.emit(event, payload);
     }
+    emitVolatile(event, payload) {
+      if (!this.socket || !this.connected) {
+        return;
+      }
+      if (this.socket.volatile && typeof this.socket.volatile.emit === "function") {
+        this.socket.volatile.emit(event, payload);
+        return;
+      }
+      this.socket.emit(event, payload);
+    }
     on(event, callback) {
       if (!this.handlers.has(event)) {
         this.handlers.set(event, []);
@@ -52248,9 +52638,11 @@
       this.uiManager = uiManager;
       this.apiBaseUrl = this._normalizeBaseUrl(options.apiBaseUrl);
       this.playerSendAccumulator = 0;
-      this.playerSendInterval = 0.05;
+      this.playerSendIntervalMoving = 1 / 30;
+      this.playerSendIntervalIdle = 0.1;
       this.profileHeartbeatAccumulator = 0;
       this.profileHeartbeatInterval = 1.25;
+      this.lastSentPlayerState = null;
       this.selfId = null;
       this._bindEvents();
     }
@@ -52273,6 +52665,7 @@
           for (const player of state.players) {
             if (player.id !== this.selfId) {
               this.playerController.upsertRemotePlayer(player.id, player);
+              this.playerController.setRemoteDrawCursor(player.id, player.drawCursor);
             }
           }
         }
@@ -52297,6 +52690,11 @@
         return null;
       }
       return trimmed.replace(/\/$/, "");
+    }
+    _buildLocalPlayerState() {
+      const state = this.playerController.getLocalNetworkState();
+      state.drawCursor = this.drawingSystem.getLocalDrawCursorState();
+      return state;
     }
     async _bootstrapLegacyFallback(rootError) {
       try {
@@ -52338,16 +52736,35 @@
       if (!this.socketManager.connected) {
         return;
       }
+      const state = this._buildLocalPlayerState();
+      const activeMovement = this._isMovementActive(state, this.lastSentPlayerState);
+      const sendInterval = activeMovement ? this.playerSendIntervalMoving : this.playerSendIntervalIdle;
       this.profileHeartbeatAccumulator += deltaSeconds;
       if (this.profileHeartbeatAccumulator >= this.profileHeartbeatInterval) {
-        this.profileHeartbeatAccumulator = 0;
-        this.socketManager.emit("player:update", this.playerController.getLocalNetworkState());
+        this.profileHeartbeatAccumulator %= this.profileHeartbeatInterval;
+        this.socketManager.emit("player:update", state);
+        this.lastSentPlayerState = state;
       }
       this.playerSendAccumulator += deltaSeconds;
-      if (this.playerSendAccumulator >= this.playerSendInterval) {
-        this.playerSendAccumulator = 0;
-        this.socketManager.emit("player:update", this.playerController.getLocalNetworkState());
+      if (this.playerSendAccumulator >= sendInterval) {
+        this.playerSendAccumulator %= sendInterval;
+        this.socketManager.emitVolatile("player:update", state);
+        this.lastSentPlayerState = state;
       }
+    }
+    _isMovementActive(next, previous) {
+      if (!next?.position || !previous?.position) {
+        return true;
+      }
+      const dx = Number(next.position.x) - Number(previous.position.x);
+      const dy = Number(next.position.y) - Number(previous.position.y);
+      const dz = Number(next.position.z) - Number(previous.position.z);
+      const positionDeltaSq = dx * dx + dy * dy + dz * dz;
+      if (positionDeltaSq > 4e-4) {
+        return true;
+      }
+      const yawDelta = Math.abs((Number(next.rotationY) || 0) - (Number(previous.rotationY) || 0));
+      return yawDelta > 0.015;
     }
     _bindEvents() {
       this.uiManager.bindChat(
@@ -52374,7 +52791,7 @@
         this.selfId = id;
         this.uiManager.setConnectionStatus(true);
         this.playerController.setLocalPlayerId(id);
-        const profile = this.playerController.getLocalNetworkState();
+        const profile = this._buildLocalPlayerState();
         this.socketManager.emit("player:join", profile);
         this.socketManager.emit("player:update", profile);
         this._verifyServerFeatureSupport();
@@ -52397,6 +52814,7 @@
           for (const player of payload.players) {
             if (player.id !== this.selfId) {
               this.playerController.upsertRemotePlayer(player.id, player);
+              this.playerController.setRemoteDrawCursor(player.id, player.drawCursor);
             }
           }
         }
@@ -52406,6 +52824,7 @@
           return;
         }
         this.playerController.upsertRemotePlayer(payload.id, payload);
+        this.playerController.setRemoteDrawCursor(payload.id, payload.drawCursor);
         if (typeof payload.color === "string") {
           this.playerController.setRemotePlayerColor(payload.id, payload.color);
         }

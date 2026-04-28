@@ -132,6 +132,39 @@ function sanitizePlayerName(value, fallback = 'Writer') {
   return normalized || fallback;
 }
 
+function sanitizeDrawCursor(payload) {
+  if (!payload || typeof payload !== 'object' || payload.active !== true) {
+    return null;
+  }
+
+  const position = payload.position || {};
+  const normal = payload.normal || {};
+  const x = Number(position.x);
+  const y = Number(position.y);
+  const z = Number(position.z);
+  const nx = Number(normal.x);
+  const ny = Number(normal.y);
+  const nz = Number(normal.z);
+
+  if (![x, y, z, nx, ny, nz].every(isFiniteNumber)) {
+    return null;
+  }
+
+  return {
+    active: true,
+    position: {
+      x: clamp(x, -5000, 5000),
+      y: clamp(y, -100, 500),
+      z: clamp(z, -5000, 5000)
+    },
+    normal: {
+      x: clamp(nx, -1, 1),
+      y: clamp(ny, -1, 1),
+      z: clamp(nz, -1, 1)
+    }
+  };
+}
+
 function sanitizeStrokePacket(packet, playerId) {
   if (!packet || typeof packet !== 'object') {
     return null;
@@ -285,6 +318,7 @@ function sanitizePlayerState(payload, socketId) {
   const previousName = players.get(socketId)?.name || 'Writer';
   const color = sanitizeHexColor(payload.color, previousColor);
   const name = sanitizePlayerName(payload.name, previousName);
+  const drawCursor = sanitizeDrawCursor(payload.drawCursor);
 
   if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(z)) {
     return null;
@@ -300,6 +334,7 @@ function sanitizePlayerState(payload, socketId) {
     rotationY,
     color,
     name,
+    drawCursor,
     timestamp: Date.now()
   };
 }

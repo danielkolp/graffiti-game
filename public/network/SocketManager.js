@@ -22,6 +22,17 @@ export class SocketManager {
     this.socket.emit(event, payload);
   }
 
+  emitVolatile(event, payload) {
+    if (!this.socket || !this.connected) {
+      return;
+    }
+    if (this.socket.volatile && typeof this.socket.volatile.emit === 'function') {
+      this.socket.volatile.emit(event, payload);
+      return;
+    }
+    this.socket.emit(event, payload);
+  }
+
   on(event, callback) {
     if (!this.handlers.has(event)) {
       this.handlers.set(event, []);
